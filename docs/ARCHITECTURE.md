@@ -258,16 +258,20 @@ normalized R/G/B support as a confidence image and reports coverage, outlier
 count, normalized error, and initial/final CFA RMSE.
 
 The deterministic `benchmark-joint` harness compares demosaic-then-average,
-phase-aware initialization, least-squares joint inversion, and Huber-robust joint
-inversion against known RGB truth. It reports global RGB/chroma errors plus
+phase-aware initialization, PSF-aware least-squares joint inversion, Huber-robust joint
+inversion without PSF information, and PSF-aware robust inversion against known
+RGB truth. It reports global RGB/chroma errors plus
 stellar aperture flux, FWHM, elongation, false color, and luminance errors. Its
-fixed-seeing default matches the implemented forward operator; variable seeing
-is retained as a declared model-mismatch stress test.
+variable-seeing mode is an explicit ablation of the PSF operator.
 
-This is an initial translation-only operator. It does not yet claim a complete
-physical image-formation model: per-frame PSF convolution, lens distortion,
-photometric scale, background offsets, tiled execution, and uncertainty derived
-from the inverse Hessian remain to be implemented and benchmarked.
+Each light may provide a Gaussian PSF sigma in sensor pixels. The forward model
+combines that convolution with subpixel bilinear sampling in one normalized
+stencil; residual backprojection uses its exact transpose. PSF updates use a
+conservative SIRT normalization, flux-conserving bilateral luminance diffusion,
+and the existing chroma prior. Translation-only inputs retain the earlier
+diagonal update and exact single-frame CFA behavior. The model does not yet cover
+non-Gaussian/spatially varying PSFs, lens distortion, photometric scale,
+background offsets, tiled execution, or inverse-Hessian uncertainty.
 
 ## Diagnostic Maps
 

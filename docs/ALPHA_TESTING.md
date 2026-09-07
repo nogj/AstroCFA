@@ -35,6 +35,7 @@ astrocfa-nogui develop light.dng \
 astrocfa-nogui stack light-01.dng light-02.dng light-03.dng \
   --joint-reconstruct \
   --offset 0,0 --offset 0.42,-0.18 --offset -0.31,0.27 \
+  --psf-sigma 0.72 --psf-sigma 0.91 --psf-sigma 0.68 \
   -o joint-linear.tif \
   --export-confidence joint-confidence.tif
 ```

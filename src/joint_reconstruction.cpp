@@ -3,6 +3,7 @@
 #include "astrocfa/demosaic.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -68,11 +69,96 @@ bool visit_bilinear(double x, double y, std::size_t width, std::size_t height,
   return true;
 }
 
-double sample_channel(const astrocfa::RgbImage &image, int channel, double x,
-                      double y) {
+struct AxisStencilEntry {
+  std::size_t index;
+  double weight;
+};
+
+struct AxisStencil {
+  std::array<AxisStencilEntry, 128> entries;
+  std::size_t size = 0;
+
+  [[nodiscard]] const AxisStencilEntry *begin() const { return entries.data(); }
+  [[nodiscard]] const AxisStencilEntry *end() const {
+    return entries.data() + size;
+  }
+  [[nodiscard]] bool empty() const { return size == 0; }
+};
+
+void add_axis_weight(AxisStencil &stencil, std::size_t index,
+                     double weight) {
+  for(std::size_t i = 0; i < stencil.size; ++i) {
+    AxisStencilEntry &entry = stencil.entries[i];
+    if(entry.index == index) {
+      entry.weight += weight;
+      return;
+    }
+  }
+  if(stencil.size >= stencil.entries.size()) {
+    throw std::invalid_argument("PSF stencil exceeds supported radius");
+  }
+  stencil.entries[stencil.size++] =
+      AxisStencilEntry{.index = index, .weight = weight};
+}
+
+AxisStencil make_axis_stencil(double position, std::size_t extent,
+                              double psf_sigma) {
+  AxisStencil stencil;
+  const int radius = psf_sigma > 0.0
+                         ? std::max(1, static_cast<int>(std::ceil(3.0 * psf_sigma)))
+                         : 0;
+  double weight_sum = 0.0;
+  for(int tap = -radius; tap <= radius; ++tap) {
+    const double shifted = position + static_cast<double>(tap);
+    if(shifted < 0.0 || shifted > static_cast<double>(extent - 1U)) {
+      continue;
+    }
+    const double psf_weight = psf_sigma > 0.0
+                                  ? std::exp(-0.5 * tap * tap /
+                                             (psf_sigma * psf_sigma))
+                                  : 1.0;
+    const std::size_t lower = static_cast<std::size_t>(std::floor(shifted));
+    const std::size_t upper = std::min(lower + 1U, extent - 1U);
+    const double fraction = shifted - static_cast<double>(lower);
+    add_axis_weight(stencil, lower, psf_weight * (1.0 - fraction));
+    if(fraction > 0.0) {
+      add_axis_weight(stencil, upper, psf_weight * fraction);
+    }
+    weight_sum += psf_weight;
+  }
+  if(weight_sum > 0.0) {
+    for(std::size_t i = 0; i < stencil.size; ++i) {
+      stencil.entries[i].weight /= weight_sum;
+    }
+  }
+  return stencil;
+}
+
+template <typename Visitor>
+bool visit_measurement_stencil(double x, double y, double psf_sigma,
+                               std::size_t width, std::size_t height,
+                               Visitor visitor) {
+  if(psf_sigma <= 0.0) {
+    return visit_bilinear(x, y, width, height, visitor);
+  }
+  const AxisStencil x_stencil = make_axis_stencil(x, width, psf_sigma);
+  const AxisStencil y_stencil = make_axis_stencil(y, height, psf_sigma);
+  if(x_stencil.empty() || y_stencil.empty()) {
+    return false;
+  }
+  for(const AxisStencilEntry &y_entry : y_stencil) {
+    for(const AxisStencilEntry &x_entry : x_stencil) {
+      visitor(x_entry.index, y_entry.index, x_entry.weight * y_entry.weight);
+    }
+  }
+  return true;
+}
+
+double sample_measurement(const astrocfa::RgbImage &image, int channel, double x,
+                          double y, double psf_sigma) {
   double value = 0.0;
-  const bool inside = visit_bilinear(
-      x, y, image.width(), image.height(),
+  const bool inside = visit_measurement_stencil(
+      x, y, psf_sigma, image.width(), image.height(),
       [&](std::size_t px, std::size_t py, double weight) {
         value += weight * get_channel(image.pixel(px, py), channel);
       });
@@ -121,8 +207,10 @@ ResidualSummary measure_residual(const astrocfa::RgbImage &image,
           continue;
         }
         const int channel = channel_index(input.cfa->pattern().at(x, y));
-        const double residual = static_cast<double>(sample.value) -
-                                sample_channel(image, channel, target_x, target_y);
+        const double residual =
+            static_cast<double>(sample.value) -
+            sample_measurement(image, channel, target_x, target_y,
+                               input.psf_sigma * scale);
         const astrocfa::NoiseEstimate noise =
             astrocfa::estimate_noise(sample.value, options.noise);
         squared += residual * residual;
@@ -144,13 +232,65 @@ double luminance(astrocfa::RgbPixel pixel) {
   return 0.2126 * pixel.r + 0.7152 * pixel.g + 0.0722 * pixel.b;
 }
 
+void regularize_flux_conserving_luma(
+    astrocfa::RgbImage &image,
+    const astrocfa::JointReconstructionOptions &options) {
+  const std::size_t width = image.width();
+  const std::size_t height = image.height();
+  std::vector<astrocfa::RgbPixel> delta(width * height);
+  const double luma_step = 0.25 * options.luma_smoothness;
+  const auto diffuse_pair = [&](std::size_t first_x, std::size_t first_y,
+                                std::size_t second_x, std::size_t second_y) {
+    const astrocfa::RgbPixel first = image.pixel(first_x, first_y);
+    const astrocfa::RgbPixel second = image.pixel(second_x, second_y);
+    const double conductance = std::exp(
+        -options.edge_sensitivity * std::abs(luminance(second) - luminance(first)));
+    const double green_transfer =
+        luma_step * conductance * (static_cast<double>(second.g) - first.g);
+    astrocfa::RgbPixel &first_delta = delta[first_y * width + first_x];
+    astrocfa::RgbPixel &second_delta = delta[second_y * width + second_x];
+    first_delta.g += static_cast<float>(green_transfer);
+    second_delta.g -= static_cast<float>(green_transfer);
+  };
+
+  for(std::size_t y = 0; y < height; ++y) {
+    for(std::size_t x = 0; x < width; ++x) {
+      if(x + 1U < width) {
+        diffuse_pair(x, y, x + 1U, y);
+      }
+      if(y + 1U < height) {
+        diffuse_pair(x, y, x, y + 1U);
+      }
+    }
+  }
+  for(std::size_t y = 0; y < height; ++y) {
+    for(std::size_t x = 0; x < width; ++x) {
+      const astrocfa::RgbPixel current = image.pixel(x, y);
+      const astrocfa::RgbPixel change = delta[y * width + x];
+      const double green = static_cast<double>(current.g) + change.g;
+      const double red_chroma = static_cast<double>(current.r) - current.g;
+      const double blue_chroma = static_cast<double>(current.b) - current.g;
+      image.set_pixel(
+          x, y,
+          astrocfa::RgbPixel{
+              .r = static_cast<float>(std::clamp(green + red_chroma, 0.0, 1.25)),
+              .g = static_cast<float>(std::clamp(green, 0.0, 1.25)),
+              .b = static_cast<float>(std::clamp(green + blue_chroma, 0.0, 1.25)),
+          });
+    }
+  }
+}
+
 void regularize_chroma(astrocfa::RgbImage &image,
                        const astrocfa::JointReconstructionOptions &options,
                        const std::vector<astrocfa::RgbPixel> &data_support,
-                       bool preserve_direct_measurements) {
+                       bool preserve_direct_measurements, bool psf_aware) {
   if((options.chroma_smoothness <= 0.0 && options.luma_smoothness <= 0.0) ||
      image.width() < 3 || image.height() < 3) {
     return;
+  }
+  if(psf_aware) {
+    regularize_flux_conserving_luma(image, options);
   }
   const int dx[4] = {-1, 1, 0, 0};
   const int dy[4] = {0, 0, -1, 1};
@@ -181,7 +321,8 @@ void regularize_chroma(astrocfa::RgbImage &image,
           continue;
         }
         const double chroma_amount = std::clamp(options.chroma_smoothness, 0.0, 1.0);
-        const double luma_amount = std::clamp(options.luma_smoothness, 0.0, 1.0);
+        const double luma_amount =
+            psf_aware ? 0.0 : std::clamp(options.luma_smoothness, 0.0, 1.0);
         const double current_red = center.r - center.g;
         const double current_blue = center.b - center.g;
         const astrocfa::RgbPixel support = data_support[y * image.width() + x];
@@ -217,13 +358,15 @@ JointReconstructionResult reconstruct_joint_cfa(
   if(frames.empty() || frames.front().cfa == nullptr) {
     throw std::invalid_argument("Joint CFA reconstruction requires input frames");
   }
-  if(options.scale == 0) {
-    throw std::invalid_argument("Joint CFA scale must be positive");
+  if(options.scale == 0 || options.scale > 2) {
+    throw std::invalid_argument("Joint CFA scale must be 1 or 2");
   }
   if(options.learning_rate <= 0.0 || options.learning_rate > 1.0 ||
      options.huber_sigma <= 0.0 || options.luma_smoothness < 0.0 ||
      options.luma_smoothness > 1.0 || options.chroma_smoothness < 0.0 ||
      options.chroma_smoothness > 1.0 || !std::isfinite(options.huber_sigma) ||
+     !std::isfinite(options.learning_rate) || options.edge_sensitivity < 0.0 ||
+     !std::isfinite(options.edge_sensitivity) ||
      !std::isfinite(options.luma_smoothness) ||
      !std::isfinite(options.chroma_smoothness)) {
     throw std::invalid_argument("Invalid joint reconstruction solver options");
@@ -232,8 +375,12 @@ JointReconstructionResult reconstruct_joint_cfa(
   const CfaFrame &reference = *frames.front().cfa;
   for(const auto &input : frames) {
     if(input.cfa == nullptr || input.cfa->width() != reference.width() ||
-       input.cfa->height() != reference.height() || input.weight <= 0.0) {
-      throw std::invalid_argument("Joint CFA inputs must be non-null, positive-weight, and equal-sized");
+       input.cfa->height() != reference.height() || input.weight <= 0.0 ||
+       input.psf_sigma < 0.0 || input.psf_sigma > 8.0 ||
+       !std::isfinite(input.psf_sigma) || !std::isfinite(input.weight) ||
+       !std::isfinite(input.offset.dx) || !std::isfinite(input.offset.dy)) {
+      throw std::invalid_argument(
+          "Joint CFA inputs require equal dimensions, positive weights, and PSF sigma in 0..8");
     }
     if(!compatible_pattern(reference.pattern(), input.cfa->pattern())) {
       throw std::invalid_argument("Joint CFA input Bayer phases differ");
@@ -263,6 +410,9 @@ JointReconstructionResult reconstruct_joint_cfa(
     std::fill(denominator.begin(), denominator.end(), RgbPixel{});
   };
   const double scale = static_cast<double>(options.scale);
+  const bool psf_aware = std::any_of(
+      frames.begin(), frames.end(),
+      [](const JointCfaFrame &input) { return input.psf_sigma > 0.0; });
 
   const auto accumulate_measurements = [&](bool residual_mode) {
     clear_accumulators();
@@ -279,7 +429,8 @@ JointReconstructionResult reconstruct_joint_cfa(
           double value = sample.value;
           double measurement_weight = input.weight;
           if(residual_mode) {
-            const double prediction = sample_channel(image, channel, target_x, target_y);
+            const double prediction = sample_measurement(
+                image, channel, target_x, target_y, input.psf_sigma * scale);
             value -= prediction;
             const NoiseEstimate noise = estimate_noise(sample.value, options.noise);
             const double normalized = std::abs(value) / noise.sigma;
@@ -288,17 +439,20 @@ JointReconstructionResult reconstruct_joint_cfa(
                                       : 1.0;
             measurement_weight *= robust * noise.weight;
           }
-          visit_bilinear(target_x, target_y, width, height,
-                         [&](std::size_t px, std::size_t py, double kernel_weight) {
-                           const std::size_t index = py * width + px;
-                           const double weighted = measurement_weight * kernel_weight;
-                           channel_ref(numerator[index], channel) +=
-                               static_cast<float>(weighted * value);
-                           channel_ref(denominator[index], channel) +=
-                               static_cast<float>(residual_mode
-                                                      ? weighted * kernel_weight
-                                                      : weighted);
-                         });
+          const double operator_sigma =
+              residual_mode ? input.psf_sigma * scale : 0.0;
+          visit_measurement_stencil(
+              target_x, target_y, operator_sigma, width, height,
+              [&](std::size_t px, std::size_t py, double operator_weight) {
+                const std::size_t index = py * width + px;
+                const double weighted = measurement_weight * operator_weight;
+                channel_ref(numerator[index], channel) +=
+                    static_cast<float>(weighted * value);
+                channel_ref(denominator[index], channel) +=
+                    static_cast<float>(residual_mode && !psf_aware
+                                           ? weighted * operator_weight
+                                           : weighted);
+              });
         }
       }
     }
@@ -339,7 +493,10 @@ JointReconstructionResult reconstruct_joint_cfa(
         image.set_pixel(x, y, pixel);
       }
     }
-    regularize_chroma(image, options, denominator, frames.size() == 1U);
+    const bool preserve_direct_measurements =
+        frames.size() == 1U && frames.front().psf_sigma == 0.0;
+    regularize_chroma(image, options, denominator, preserve_direct_measurements,
+                      psf_aware);
   }
 
   accumulate_measurements(true);
@@ -374,6 +531,20 @@ JointReconstructionResult reconstruct_joint_cfa(
   stats.measurements = final.samples;
   stats.iterations = options.iterations;
   stats.robust_outliers = final.outliers;
+  for(const JointCfaFrame &input : frames) {
+    if(input.psf_sigma <= 0.0) {
+      continue;
+    }
+    if(stats.psf_frames == 0) {
+      stats.minimum_psf_sigma = input.psf_sigma;
+    } else {
+      stats.minimum_psf_sigma =
+          std::min(stats.minimum_psf_sigma, input.psf_sigma);
+    }
+    stats.maximum_psf_sigma =
+        std::max(stats.maximum_psf_sigma, input.psf_sigma);
+    stats.psf_frames += 1;
+  }
   stats.initial_rmse = initial.rmse;
   stats.final_rmse = final.rmse;
   stats.final_normalized_mae = final.normalized_mae;

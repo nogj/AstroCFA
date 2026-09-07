@@ -19,7 +19,7 @@ struct MultiframeBenchmarkOptions {
   std::size_t transients_per_frame = 4;
   std::uint32_t seed = 42;
   bool add_noise = true;
-  bool vary_seeing = false;
+  bool vary_seeing = true;
   double luma_smoothness = 0.2;
   double chroma_smoothness = 0.9;
 };

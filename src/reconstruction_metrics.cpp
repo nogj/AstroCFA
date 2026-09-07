@@ -218,6 +218,8 @@ ReconstructionMetrics measure_reconstruction(const RgbImage &truth,
     }
     metrics.star_flux_relative_error +=
         std::abs(actual.flux - expected.flux) / expected.flux;
+    metrics.star_flux_relative_bias +=
+        (actual.flux - expected.flux) / expected.flux;
     metrics.star_fwhm_relative_error +=
         std::abs(actual.fwhm - expected.fwhm) / expected.fwhm;
     metrics.star_elongation_error +=
@@ -227,6 +229,7 @@ ReconstructionMetrics measure_reconstruction(const RgbImage &truth,
   if(metrics.measured_stars > 0) {
     const double count = static_cast<double>(metrics.measured_stars);
     metrics.star_flux_relative_error /= count;
+    metrics.star_flux_relative_bias /= count;
     metrics.star_fwhm_relative_error /= count;
     metrics.star_elongation_error /= count;
   }

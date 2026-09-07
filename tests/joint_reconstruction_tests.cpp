@@ -89,6 +89,31 @@ void dithers_increase_high_resolution_channel_coverage() {
           "Dithering should add direct blue support on the high-resolution grid");
 }
 
+void invalid_psf_sigma_is_rejected() {
+  astrocfa::CfaFrame frame = constant_cfa();
+  bool rejected = false;
+  try {
+    (void)astrocfa::reconstruct_joint_cfa({{.cfa = &frame, .psf_sigma = 8.1}});
+  } catch(const std::invalid_argument &) {
+    rejected = true;
+  }
+  require(rejected, "Unbounded PSF support should be rejected");
+}
+
+void psf_usage_is_reported() {
+  astrocfa::CfaFrame frame = constant_cfa();
+  const astrocfa::JointReconstructionResult result =
+      astrocfa::reconstruct_joint_cfa(
+          {{.cfa = &frame, .psf_sigma = 0.6},
+           {.cfa = &frame, .psf_sigma = 1.1}},
+          astrocfa::JointReconstructionOptions{.iterations = 1});
+  require(result.stats.psf_frames == 2, "Every PSF-aware frame should be reported");
+  require(std::abs(result.stats.minimum_psf_sigma - 0.6) < 1.0e-12,
+          "Minimum PSF sigma should be reported");
+  require(std::abs(result.stats.maximum_psf_sigma - 1.1) < 1.0e-12,
+          "Maximum PSF sigma should be reported");
+}
+
 } // namespace
 
 int main() {
@@ -96,6 +121,8 @@ int main() {
     robust_solver_rejects_transient_sample();
     single_frame_preserves_every_measured_cfa_sample();
     dithers_increase_high_resolution_channel_coverage();
+    invalid_psf_sigma_is_rejected();
+    psf_usage_is_reported();
   } catch(const std::exception &error) {
     std::cerr << "joint_reconstruction_tests failed: " << error.what() << "\n";
     return 1;

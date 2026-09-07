@@ -145,6 +145,7 @@ MultiframeBenchmarkResult run_multiframe_benchmark(MultiframeBenchmarkOptions op
     joint_inputs.push_back(JointCfaFrame{
         .cfa = &observations[i].cfa,
         .offset = offsets[i],
+        .psf_sigma = options.vary_seeing ? 0.35 + 0.12 * (i % 4U) : 0.0,
     });
   }
 
@@ -182,7 +183,7 @@ MultiframeBenchmarkResult run_multiframe_benchmark(MultiframeBenchmarkOptions op
   JointReconstructionResult least_squares =
       reconstruct_joint_cfa(joint_inputs, least_squares_options);
   benchmark.methods.push_back(MultiframeBenchmarkMethod{
-      .name = "joint-no-robust",
+      .name = "joint-psf-no-robust",
       .image = std::move(least_squares.image),
       .confidence = std::make_unique<RgbImage>(std::move(least_squares.confidence)),
       .solver_stats = least_squares.stats,
@@ -191,9 +192,24 @@ MultiframeBenchmarkResult run_multiframe_benchmark(MultiframeBenchmarkOptions op
 
   JointReconstructionOptions robust_options = base_options;
   robust_options.iterations = options.iterations;
+  std::vector<JointCfaFrame> no_psf_inputs = joint_inputs;
+  for(JointCfaFrame &input : no_psf_inputs) {
+    input.psf_sigma = 0.0;
+  }
+  JointReconstructionResult robust_no_psf =
+      reconstruct_joint_cfa(no_psf_inputs, robust_options);
+  benchmark.methods.push_back(MultiframeBenchmarkMethod{
+      .name = "joint-robust-no-psf",
+      .image = std::move(robust_no_psf.image),
+      .confidence =
+          std::make_unique<RgbImage>(std::move(robust_no_psf.confidence)),
+      .solver_stats = robust_no_psf.stats,
+      .has_solver_stats = true,
+  });
+
   JointReconstructionResult robust = reconstruct_joint_cfa(joint_inputs, robust_options);
   benchmark.methods.push_back(MultiframeBenchmarkMethod{
-      .name = "joint-robust",
+      .name = "joint-robust-psf",
       .image = std::move(robust.image),
       .confidence = std::make_unique<RgbImage>(std::move(robust.confidence)),
       .solver_stats = robust.stats,

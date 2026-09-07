@@ -53,6 +53,8 @@ void benchmark_metrics_are_finite_and_accountable() {
           "Photometry and shape metrics should cover every synthetic star");
   require(std::isfinite(metrics.star_flux_relative_error),
           "Star photometry error should be finite");
+  require(std::isfinite(metrics.star_flux_relative_bias),
+          "Star photometry bias should be finite");
   require(std::isfinite(metrics.star_fwhm_relative_error),
           "Star FWHM error should be finite");
   require(std::isfinite(metrics.star_elongation_error),
@@ -109,11 +111,11 @@ void multiframe_benchmark_is_reproducible_and_auditable() {
           .add_noise = true,
           .vary_seeing = false,
       });
-  require(benchmark.methods.size() == 4, "Benchmark should compare four pipelines");
+  require(benchmark.methods.size() == 5, "Benchmark should compare five pipelines");
   require(benchmark.injected_transients == 8,
           "Benchmark should report every injected transient");
-  require(benchmark.methods.back().name == "joint-robust",
-          "Robust joint solver should be the final benchmark method");
+  require(benchmark.methods.back().name == "joint-robust-psf",
+          "PSF-aware robust solver should be the final benchmark method");
   require(benchmark.methods.back().solver_stats.robust_outliers > 0,
           "Robust solver should expose inconsistent measurements");
   const auto &individual = benchmark.methods.front().metrics;
@@ -132,6 +134,31 @@ void multiframe_benchmark_is_reproducible_and_auditable() {
   }
 }
 
+void psf_aware_solver_recovers_variable_seeing_detail() {
+  const astrocfa::MultiframeBenchmarkResult benchmark =
+      astrocfa::run_multiframe_benchmark(astrocfa::MultiframeBenchmarkOptions{
+          .width = 64,
+          .height = 48,
+          .frames = 4,
+          .iterations = 5,
+          .transients_per_frame = 0,
+          .seed = 23,
+          .add_noise = false,
+          .vary_seeing = true,
+      });
+  const auto &individual = benchmark.methods.front().metrics;
+  const auto &without_psf = benchmark.methods[3].metrics;
+  const auto &with_psf = benchmark.methods.back().metrics;
+  require(benchmark.methods[3].name == "joint-robust-no-psf",
+          "Benchmark should retain the PSF ablation");
+  require(with_psf.rgb_rmse < individual.rgb_rmse,
+          "PSF-aware joint solve should beat individual demosaic RGB error");
+  require(with_psf.star_fwhm_relative_error < without_psf.star_fwhm_relative_error,
+          "PSF-aware forward model should improve FWHM recovery");
+  require(with_psf.chroma_mae < without_psf.chroma_mae,
+          "PSF-aware forward model should improve chroma recovery");
+}
+
 } // namespace
 
 int main() {
@@ -140,6 +167,7 @@ int main() {
     benchmark_metrics_are_finite_and_accountable();
     star_chroma_guard_reduces_synthetic_star_false_color();
     multiframe_benchmark_is_reproducible_and_auditable();
+    psf_aware_solver_recovers_variable_seeing_detail();
   } catch(const std::exception &error) {
     std::cerr << "synthetic_benchmark_tests failed: " << error.what() << "\n";
     return 1;

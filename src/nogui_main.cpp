@@ -268,6 +268,7 @@ void write_benchmark_row(const std::string &method,
       << " star_false_color=" << metrics.star_false_color
       << " star_luma_rmse=" << metrics.star_luma_rmse
       << " star_flux_rel=" << metrics.star_flux_relative_error
+      << " star_flux_bias=" << metrics.star_flux_relative_bias
       << " star_fwhm_rel=" << metrics.star_fwhm_relative_error
       << " star_elongation=" << metrics.star_elongation_error
       << " cfa_mae=" << metrics.cfa_residual_mae << "\n";
@@ -281,12 +282,14 @@ void write_multiframe_benchmark_row(
       << " star_false_color=" << method.metrics.star_false_color
       << " star_luma_rmse=" << method.metrics.star_luma_rmse
       << " star_flux_rel=" << method.metrics.star_flux_relative_error
+      << " star_flux_bias=" << method.metrics.star_flux_relative_bias
       << " star_fwhm_rel=" << method.metrics.star_fwhm_relative_error
       << " star_elongation=" << method.metrics.star_elongation_error
-      << " first_cfa_mae=" << method.metrics.cfa_residual_mae;
+      << " direct_first_cfa_mae=" << method.metrics.cfa_residual_mae;
   if(method.has_solver_stats) {
     out << " solver_rmse=" << method.solver_stats.final_rmse
-        << " outliers=" << method.solver_stats.robust_outliers;
+        << " outliers=" << method.solver_stats.robust_outliers
+        << " psf_frames=" << method.solver_stats.psf_frames;
   }
   out << "\n";
 }
@@ -814,7 +817,8 @@ int main(int argc, char **argv) {
                 << "  luma smoothness: " << options.luma_smoothness << "\n"
                 << "  chroma smoothness: " << options.chroma_smoothness << "\n"
                 << "  injected transients: " << benchmark.injected_transients << "\n"
-                << "  note: lower errors are better; solver RMSE measures all CFA lights.\n";
+                << "  note: lower errors are better; solver RMSE uses offsets and PSF.\n"
+                << "  note: direct_first_cfa_mae intentionally ignores both.\n";
       for(const auto &method : benchmark.methods) {
         write_multiframe_benchmark_row(method, std::cout);
       }
@@ -844,6 +848,7 @@ int main(int argc, char **argv) {
   if(arg1 == "stack") {
     std::vector<std::string> inputs;
     std::vector<astrocfa::SubpixelOffset> offsets;
+    std::vector<double> psf_sigmas;
     bool cfa_drizzle = false;
     bool joint_reconstruct = false;
     bool auto_register = false;
@@ -878,6 +883,8 @@ int main(int argc, char **argv) {
         huber_sigma = std::stod(argv[++i]);
       } else if(arg == "--offset" && i + 1 < argc) {
         offsets.push_back(parse_offset(argv[++i]));
+      } else if(arg == "--psf-sigma" && i + 1 < argc) {
+        psf_sigmas.push_back(std::stod(argv[++i]));
       } else if((arg == "-o" || arg == "--output") && i + 1 < argc) {
         output_path = argv[++i];
       } else if(arg == "--export-confidence" && i + 1 < argc) {
@@ -922,8 +929,16 @@ int main(int argc, char **argv) {
       std::cerr << "More --offset values were supplied than input frames.\n";
       return 2;
     }
+    if(psf_sigmas.size() > inputs.size()) {
+      std::cerr << "More --psf-sigma values were supplied than input frames.\n";
+      return 2;
+    }
     if(!confidence_path.empty() && !joint_reconstruct) {
       std::cerr << "--export-confidence requires --joint-reconstruct.\n";
+      return 2;
+    }
+    if(!psf_sigmas.empty() && !joint_reconstruct) {
+      std::cerr << "--psf-sigma requires --joint-reconstruct.\n";
       return 2;
     }
     if(joint_reconstruct && !cfa_drizzle && !scale_explicit) {
@@ -1021,6 +1036,7 @@ int main(int argc, char **argv) {
           joint_frames.push_back(astrocfa::JointCfaFrame{
               .cfa = &calibrated_frames[i],
               .offset = effective_offsets[i],
+              .psf_sigma = i < psf_sigmas.size() ? psf_sigmas[i] : 0.0,
           });
         }
         const astrocfa::JointReconstructionResult result =
@@ -1037,6 +1053,11 @@ int main(int argc, char **argv) {
                   << "  joint iterations: " << result.stats.iterations << "\n"
                   << "  joint luma/chroma smoothness: " << luma_smoothness << " / "
                   << chroma_smoothness << "\n"
+                  << "  PSF sigmas supplied: " << psf_sigmas.size()
+                  << " (missing values use 0 px)\n"
+                  << "  PSF-aware frames/range: " << result.stats.psf_frames << " / "
+                  << result.stats.minimum_psf_sigma << ".."
+                  << result.stats.maximum_psf_sigma << " px\n"
                   << "  measurements: " << result.stats.measurements << "\n"
                   << "  initial/final CFA RMSE: " << std::fixed
                   << std::setprecision(8) << result.stats.initial_rmse << " / "

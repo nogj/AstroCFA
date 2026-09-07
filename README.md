@@ -88,6 +88,8 @@ astrocfa-nogui stack light1.dng light2.dng light3.dng --cfa-drizzle --auto-regis
 astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
   --offset 0,0 --offset 0.42,-0.18 --offset -0.31,0.27 --iterations 6 \
   -o joint-linear.tif --export-confidence joint-confidence.tif
+astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
+  --psf-sigma 0.72 --psf-sigma 0.91 --psf-sigma 0.68 -o joint-psf.tif
 astrocfa-nogui develop input.dng --method bilinear-baseline -o baseline.tif
 astrocfa-nogui develop input.dng --method malvar-baseline -o malvar.tif
 astrocfa-nogui develop input.dng --method residual-interpolation -o ri.tif
@@ -122,9 +124,9 @@ AstroCFA's reconstruction work measurable rather than merely aesthetic.
 `benchmark-joint` compares demosaic-each-light-then-average with phase-aware CFA
 initialization, non-robust joint inversion, and robust joint inversion. It
 synthesizes known dithers, Poisson-Gaussian noise, optional per-frame seeing
-changes, and transient samples. Fixed seeing is the default because it matches
-the current translation-and-sampling forward model; `--seeing variable` is a
-declared stress test until per-frame PSF convolution is part of that operator.
+changes, and transient samples. The variable-seeing mode includes a direct
+ablation between ignoring the PSF and supplying each light's known Gaussian PSF
+to the forward/adjoint operator.
 The tuned priors remain exposed as `--luma-smoothness` and
 `--chroma-smoothness` for reproducible ablations.
 
@@ -144,11 +146,13 @@ CFA measurements and their supplied offsets. A phase-separated splat initializes
 the scene, then robust noise-weighted backprojection reduces the residual against
 every original light. Edge-aware chroma and green-luminance regularization keep
 single-frame direct samples exact; with multiple noisy lights, measurements are
-weighted fidelity constraints so the common estimate can denoise. The current
-solver models translation and bilinear
-sampling; PSF convolution, distortion, tiled memory use, and subpixel star
-registration remain future work. Scale 1 is the memory-conscious default for
-joint reconstruction; scale 2 is available explicitly for dithered datasets.
+weighted fidelity constraints so the common estimate can denoise. The solver
+models translation, bilinear sampling, and an optional Gaussian PSF per light.
+Use repeated `--psf-sigma` values in sensor pixels (`FWHM / 2.35482`) when PSF
+estimates are available. PSF estimation, distortion, tiled memory use, and
+subpixel star registration remain future work. Scale 1 is the memory-conscious
+default for joint reconstruction; scale 2 is available explicitly for dithered
+datasets.
 
 ## Status
 

@@ -14,6 +14,7 @@ struct JointCfaFrame {
   const CfaFrame *cfa = nullptr;
   SubpixelOffset offset;
   double weight = 1.0;
+  double psf_sigma = 0.0;
 };
 
 struct JointReconstructionOptions {
@@ -32,6 +33,9 @@ struct JointReconstructionStats {
   std::size_t measurements = 0;
   std::size_t iterations = 0;
   std::size_t robust_outliers = 0;
+  std::size_t psf_frames = 0;
+  double minimum_psf_sigma = 0.0;
+  double maximum_psf_sigma = 0.0;
   double initial_rmse = 0.0;
   double final_rmse = 0.0;
   double final_normalized_mae = 0.0;
