@@ -2,6 +2,8 @@
 
 AstroCFA is ready for technical alpha testing of RAW/DNG loading, CFA-aware
 calibration, non-neural demosaicing, TIFF/JPEG export, and diagnostic maps.
+The Qt app can now preview a developed frame and switch between image,
+alias-risk, and remosaicing-residual overlays.
 
 Useful smoke tests:
 
@@ -34,6 +36,7 @@ Good reports include:
 - camera model and RAW format;
 - exact command or GUI steps;
 - console output with residual/chroma metrics;
+- screenshots or crops from the GUI overlay selector;
 - whether the alias-risk and residual maps look plausible;
 - crops around undersampled stars, saturated stars, and flat-field defects.
 - whether `inverse-refine` improves or harms star color compared with

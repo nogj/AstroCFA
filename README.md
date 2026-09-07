@@ -59,8 +59,8 @@ that information before interpolation, then report where uncertainty remains.
 ## Initial App Shape
 
 `astrocfa` is the Qt desktop application. It starts with a minimal interface for
-selecting an input, choosing a reconstruction mode, and launching the major
-astro stages.
+selecting an input, choosing a reconstruction mode, previewing the reconstruction,
+switching diagnostic overlays, and exporting TIFF/JPEG output.
 
 `astrocfa-nogui` is the command-line executable for scripts, batch processing,
 and reproducible long-running workflows.
@@ -119,7 +119,8 @@ inspection, normalized linear CFA loading, bias/dark/flat calibration against
 single master frames or robust in-memory masters built from directories,
 CFA-safe star diagnostics, phase-aware drizzle accumulation, several non-neural
 demosaic candidates, frequency-guided CFA risk analysis, inverse chroma
-refinement, TIFF/JPEG export, and diagnostic map export.
+refinement, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
+GUI with image/alias-risk/residual overlays.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -1,6 +1,8 @@
+#include "astrocfa/diagnostic_maps.hpp"
 #include "astrocfa/demosaic.hpp"
 #include "astrocfa/frequency_cfa.hpp"
 #include "astrocfa/image_writer.hpp"
+#include "astrocfa/output_transform.hpp"
 #include "astrocfa/raw_loader.hpp"
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/raw_inspector.hpp"
@@ -14,19 +16,27 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStatusBar>
 #include <QString>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <exception>
 #include <iomanip>
+#include <memory>
 #include <sstream>
+#include <string>
 
 namespace {
 
@@ -39,6 +49,47 @@ QPushButton *make_button(const QString &text, const QString &tooltip) {
 
 void append_log(QPlainTextEdit *log, const QString &message) {
   log->appendPlainText(message);
+}
+
+unsigned char to_display_u8(float value) {
+  value = std::clamp(value, 0.0F, 1.0F);
+  value = std::pow(value, 1.0F / 2.2F);
+  return static_cast<unsigned char>(std::lround(value * 255.0F));
+}
+
+QImage to_qimage(const astrocfa::RgbImage &image) {
+  QImage qimage(static_cast<int>(image.width()), static_cast<int>(image.height()),
+                QImage::Format_RGB888);
+  for(std::size_t y = 0; y < image.height(); ++y) {
+    auto *row = qimage.scanLine(static_cast<int>(y));
+    for(std::size_t x = 0; x < image.width(); ++x) {
+      const astrocfa::RgbPixel pixel = image.pixel(x, y);
+      row[x * 3U + 0U] = to_display_u8(pixel.r);
+      row[x * 3U + 1U] = to_display_u8(pixel.g);
+      row[x * 3U + 2U] = to_display_u8(pixel.b);
+    }
+  }
+  return qimage;
+}
+
+std::string lowercase_extension(const std::string &path) {
+  const std::size_t dot = path.find_last_of('.');
+  if(dot == std::string::npos) {
+    return {};
+  }
+  std::string extension = path.substr(dot + 1);
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+  return extension;
+}
+
+astrocfa::RgbImage gui_output_image(const astrocfa::RgbImage &linear,
+                                    const std::string &path) {
+  const std::string extension = lowercase_extension(path);
+  if(extension == "jpg" || extension == "jpeg") {
+    return astrocfa::make_astro_preview(linear);
+  }
+  return linear;
 }
 
 } // namespace
@@ -123,6 +174,37 @@ int main(int argc, char **argv) {
   actions_layout->addWidget(develop);
   actions_layout->addStretch(1);
 
+  auto *preview_group = new QGroupBox("Preview");
+  auto *preview_layout = new QVBoxLayout(preview_group);
+  auto *preview_toolbar = new QWidget;
+  auto *preview_toolbar_layout = new QHBoxLayout(preview_toolbar);
+  preview_toolbar_layout->setContentsMargins(0, 0, 0, 0);
+  auto *overlay = new QComboBox;
+  overlay->addItem("image");
+  overlay->addItem("alias risk");
+  overlay->addItem("residual");
+  auto *zoom = new QComboBox;
+  zoom->addItem("fit");
+  zoom->addItem("100%");
+  zoom->addItem("200%");
+  auto *preview_status = new QLabel("No preview");
+  preview_toolbar_layout->addWidget(new QLabel("Overlay"));
+  preview_toolbar_layout->addWidget(overlay);
+  preview_toolbar_layout->addWidget(new QLabel("Zoom"));
+  preview_toolbar_layout->addWidget(zoom);
+  preview_toolbar_layout->addStretch(1);
+  preview_toolbar_layout->addWidget(preview_status);
+
+  auto *image_label = new QLabel;
+  image_label->setAlignment(Qt::AlignCenter);
+  image_label->setMinimumSize(480, 300);
+  image_label->setText("Develop an input to preview reconstruction and diagnostics");
+  auto *scroll_area = new QScrollArea;
+  scroll_area->setWidget(image_label);
+  scroll_area->setWidgetResizable(true);
+  preview_layout->addWidget(preview_toolbar);
+  preview_layout->addWidget(scroll_area, 1);
+
   auto *log = new QPlainTextEdit;
   log->setReadOnly(true);
   log->setMinimumHeight(220);
@@ -131,6 +213,7 @@ int main(int argc, char **argv) {
   root->addWidget(input_group);
   root->addWidget(mode_group);
   root->addWidget(actions);
+  root->addWidget(preview_group, 2);
   root->addWidget(log, 1);
 
   window.setCentralWidget(central);
@@ -164,6 +247,44 @@ int main(int argc, char **argv) {
     }
     return true;
   };
+
+  auto preview_image = std::make_shared<QImage>();
+  auto alias_image = std::make_shared<QImage>();
+  auto residual_image = std::make_shared<QImage>();
+
+  const auto update_preview = [&]() {
+    const QImage *selected = nullptr;
+    if(overlay->currentText() == "alias risk") {
+      selected = alias_image.get();
+    } else if(overlay->currentText() == "residual") {
+      selected = residual_image.get();
+    } else {
+      selected = preview_image.get();
+    }
+
+    if(selected == nullptr || selected->isNull()) {
+      image_label->setPixmap(QPixmap());
+      image_label->setText("Develop an input to preview reconstruction and diagnostics");
+      preview_status->setText("No preview");
+      return;
+    }
+
+    QPixmap pixmap = QPixmap::fromImage(*selected);
+    if(zoom->currentText() == "fit") {
+      const QSize target = scroll_area->viewport()->size();
+      pixmap = pixmap.scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    } else if(zoom->currentText() == "200%") {
+      pixmap = pixmap.scaled(selected->width() * 2, selected->height() * 2,
+                             Qt::KeepAspectRatio, Qt::FastTransformation);
+    }
+    image_label->setText(QString());
+    image_label->setPixmap(pixmap);
+    image_label->resize(pixmap.size());
+    preview_status->setText(QString("%1 x %2").arg(selected->width()).arg(selected->height()));
+  };
+
+  QObject::connect(overlay, &QComboBox::currentTextChanged, [&]() { update_preview(); });
+  QObject::connect(zoom, &QComboBox::currentTextChanged, [&]() { update_preview(); });
 
   QObject::connect(inspect, &QPushButton::clicked, [&]() {
     if(!require_input()) {
@@ -288,6 +409,11 @@ int main(int argc, char **argv) {
       std::ostringstream report;
       const astrocfa::DemosaicQuality quality =
           astrocfa::analyze_demosaic_quality(result.image, frame.cfa);
+      *preview_image = to_qimage(astrocfa::make_astro_preview(result.image));
+      *alias_image = to_qimage(astrocfa::make_frequency_alias_risk_map(frame.cfa));
+      *residual_image = to_qimage(
+          astrocfa::make_remosaic_residual_map(frame.cfa, result.image));
+      update_preview();
       report << "AstroCFA reconstruction fidelity check\n"
              << "  input: " << input_path->text().toStdString() << "\n"
              << "  method: "
@@ -310,7 +436,8 @@ int main(int argc, char **argv) {
              << "  mean interpolated chroma: " << quality.mean_interpolated_chroma
              << "\n";
       if(!output_path->text().isEmpty()) {
-        astrocfa::write_rgb_image(result.image, output_path->text().toStdString());
+        const std::string path = output_path->text().toStdString();
+        astrocfa::write_rgb_image(gui_output_image(result.image, path), path);
         report << "  output: " << output_path->text().toStdString() << "\n";
       } else {
         report << "  note: no output path selected; choose one to write TIFF/JPEG.\n";
