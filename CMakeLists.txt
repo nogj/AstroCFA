@@ -56,6 +56,7 @@ add_library(astrocfa_core
   src/multiframe_benchmark.cpp
   src/noise_model.cpp
   src/output_transform.cpp
+  src/psf_estimator.cpp
   src/raw_inspector.cpp
   src/raw_loader.cpp
   src/reconstruction_metrics.cpp

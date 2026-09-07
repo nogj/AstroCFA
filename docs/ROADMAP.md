@@ -43,8 +43,11 @@
   confidence, transient rejection, and known Gaussian PSF per light. Implemented.
 - Deterministic multi-frame ablation benchmark with known dithers, sensor noise,
   transients, photometry, FWHM, elongation, and RGB/chroma truth metrics. Implemented.
-- Estimate spatially varying, non-Gaussian PSFs and select iterations by the
-  Poisson-Gaussian discrepancy principle.
+- Robust per-frame Gaussian PSF estimation directly from CFA star samples and
+  relative-seeing forward models. Implemented.
+- Select iterations by the Poisson-Gaussian discrepancy principle. Implemented.
+- Extend the retained per-star measurements into spatially varying,
+  non-Gaussian PSF fields.
 
 ## Milestone 5: Baseline Reconstruction
 
@@ -64,7 +67,7 @@
 ## Milestone 7: Astro Development
 
 - Background gradient model.
-- PSF estimation.
+- Spatially varying/non-Gaussian PSF estimation.
 - Regularized Richardson-Lucy and Wiener deconvolution.
 - Photometric color calibration hooks.
 - Arcsinh and generalized hyperbolic stretch.

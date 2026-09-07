@@ -1,6 +1,7 @@
 #pragma once
 
 #include "astrocfa/joint_reconstruction.hpp"
+#include "astrocfa/psf_estimator.hpp"
 #include "astrocfa/reconstruction_metrics.hpp"
 
 #include <cstddef>
@@ -37,6 +38,8 @@ struct MultiframeBenchmarkResult {
   RgbImage truth;
   std::vector<SyntheticStar> stars;
   std::vector<SubpixelOffset> offsets;
+  std::vector<PsfEstimate> psf_estimates;
+  std::vector<double> relative_psf_sigmas;
   std::size_t injected_transients = 0;
   std::vector<MultiframeBenchmarkMethod> methods;
 };

@@ -181,6 +181,7 @@ astrocfa::RgbPixel bilinear_rgb(const astrocfa::RgbImage &image, double x,
 struct ResidualSummary {
   double rmse = 0.0;
   double normalized_mae = 0.0;
+  double reduced_chi_square = 0.0;
   std::size_t samples = 0;
   std::size_t outliers = 0;
 };
@@ -191,6 +192,7 @@ ResidualSummary measure_residual(const astrocfa::RgbImage &image,
   ResidualSummary summary;
   double squared = 0.0;
   double normalized = 0.0;
+  double robust_chi_square = 0.0;
   const double scale = static_cast<double>(options.scale);
   for(const auto &input : frames) {
     for(std::size_t y = 0; y < input.cfa->height(); ++y) {
@@ -214,7 +216,11 @@ ResidualSummary measure_residual(const astrocfa::RgbImage &image,
         const astrocfa::NoiseEstimate noise =
             astrocfa::estimate_noise(sample.value, options.noise);
         squared += residual * residual;
-        normalized += std::abs(residual) / noise.sigma;
+        const double normalized_residual = residual / noise.sigma;
+        normalized += std::abs(normalized_residual);
+        robust_chi_square +=
+            std::min(normalized_residual * normalized_residual,
+                     options.huber_sigma * options.huber_sigma);
         summary.outliers +=
             std::abs(residual) > options.huber_sigma * noise.sigma ? 1U : 0U;
         summary.samples += 1;
@@ -224,6 +230,8 @@ ResidualSummary measure_residual(const astrocfa::RgbImage &image,
   if(summary.samples > 0) {
     summary.rmse = std::sqrt(squared / static_cast<double>(summary.samples));
     summary.normalized_mae = normalized / static_cast<double>(summary.samples);
+    summary.reduced_chi_square =
+        robust_chi_square / static_cast<double>(summary.samples);
   }
   return summary;
 }
@@ -367,6 +375,9 @@ JointReconstructionResult reconstruct_joint_cfa(
      options.chroma_smoothness > 1.0 || !std::isfinite(options.huber_sigma) ||
      !std::isfinite(options.learning_rate) || options.edge_sensitivity < 0.0 ||
      !std::isfinite(options.edge_sensitivity) ||
+     options.discrepancy_target <= 0.0 || options.discrepancy_tolerance < 0.0 ||
+     !std::isfinite(options.discrepancy_target) ||
+     !std::isfinite(options.discrepancy_tolerance) ||
      !std::isfinite(options.luma_smoothness) ||
      !std::isfinite(options.chroma_smoothness)) {
     throw std::invalid_argument("Invalid joint reconstruction solver options");
@@ -474,6 +485,8 @@ JointReconstructionResult reconstruct_joint_cfa(
   }
 
   const ResidualSummary initial = measure_residual(image, frames, options);
+  std::size_t executed_iterations = 0;
+  bool stopped_by_discrepancy = false;
   for(std::size_t iteration = 0; iteration < options.iterations; ++iteration) {
     accumulate_measurements(true);
     for(std::size_t y = 0; y < height; ++y) {
@@ -497,6 +510,17 @@ JointReconstructionResult reconstruct_joint_cfa(
         frames.size() == 1U && frames.front().psf_sigma == 0.0;
     regularize_chroma(image, options, denominator, preserve_direct_measurements,
                       psf_aware);
+    executed_iterations = iteration + 1U;
+    if(options.stop_on_discrepancy &&
+       executed_iterations >= options.minimum_iterations) {
+      const ResidualSummary current = measure_residual(image, frames, options);
+      const double threshold = options.discrepancy_target *
+                               (1.0 + options.discrepancy_tolerance);
+      if(current.reduced_chi_square <= threshold) {
+        stopped_by_discrepancy = true;
+        break;
+      }
+    }
   }
 
   accumulate_measurements(true);
@@ -529,7 +553,8 @@ JointReconstructionResult reconstruct_joint_cfa(
   JointReconstructionStats stats;
   stats.frames = frames.size();
   stats.measurements = final.samples;
-  stats.iterations = options.iterations;
+  stats.iterations = executed_iterations;
+  stats.maximum_iterations = options.iterations;
   stats.robust_outliers = final.outliers;
   for(const JointCfaFrame &input : frames) {
     if(input.psf_sigma <= 0.0) {
@@ -548,6 +573,9 @@ JointReconstructionResult reconstruct_joint_cfa(
   stats.initial_rmse = initial.rmse;
   stats.final_rmse = final.rmse;
   stats.final_normalized_mae = final.normalized_mae;
+  stats.initial_reduced_chi_square = initial.reduced_chi_square;
+  stats.final_reduced_chi_square = final.reduced_chi_square;
+  stats.stopped_by_discrepancy = stopped_by_discrepancy;
   for(int channel = 0; channel < 3; ++channel) {
     stats.channel_coverage[channel] =
         pixels > 0 ? static_cast<double>(covered[channel]) / static_cast<double>(pixels)

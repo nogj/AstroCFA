@@ -16,7 +16,7 @@ astrocfa-nogui benchmark-joint --export-prefix benchmark/joint
 
 astrocfa-nogui benchmark-joint --seeing variable --transients 4
 
-astrocfa-nogui inspect light.dng --linear-cfa --frequency-cfa
+astrocfa-nogui inspect light.dng --linear-cfa --frequency-cfa --estimate-psf
 
 astrocfa-nogui develop light.dng \
   --method inverse-refine \
@@ -38,6 +38,11 @@ astrocfa-nogui stack light-01.dng light-02.dng light-03.dng \
   --psf-sigma 0.72 --psf-sigma 0.91 --psf-sigma 0.68 \
   -o joint-linear.tif \
   --export-confidence joint-confidence.tif
+
+astrocfa-nogui stack light-01.dng light-02.dng light-03.dng \
+  --joint-reconstruct --auto-register --auto-psf \
+  -o joint-auto-psf.tif \
+  --export-confidence joint-auto-confidence.tif
 ```
 
 Good reports include:
@@ -55,6 +60,8 @@ Good reports include:
   `inverse-refine-no-star-guard` in `benchmark-debayer`.
 - for dithered sequences, initial/final CFA RMSE, robust outlier count, RGB
   direct coverage, and whether the joint confidence map matches the dither pattern.
+- for variable-seeing sequences, estimated FWHM/star counts per light, relative
+  PSF sigmas, reduced chi-square, and whether discrepancy stopping triggered.
 
 Do not treat current output as color-managed final data. TIFF export is linear
 sensor RGB, and JPEG export is a preview path.

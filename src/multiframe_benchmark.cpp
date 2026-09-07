@@ -149,10 +149,24 @@ MultiframeBenchmarkResult run_multiframe_benchmark(MultiframeBenchmarkOptions op
     });
   }
 
+  std::vector<PsfEstimate> psf_estimates;
+  psf_estimates.reserve(observations.size());
+  bool every_psf_valid = true;
+  for(const SyntheticCfaObservation &observation : observations) {
+    psf_estimates.push_back(estimate_cfa_psf(observation.cfa));
+    every_psf_valid = every_psf_valid && psf_estimates.back().valid;
+  }
+  std::vector<double> estimated_relative_psfs;
+  if(every_psf_valid) {
+    estimated_relative_psfs = relative_psf_sigmas(psf_estimates);
+  }
+
   MultiframeBenchmarkResult benchmark{
       .truth = scene.truth,
       .stars = scene.stars,
       .offsets = offsets,
+      .psf_estimates = psf_estimates,
+      .relative_psf_sigmas = estimated_relative_psfs,
       .injected_transients = injected_transients,
   };
   RgbImage individual = aligned_individual_average(observations, offsets);
@@ -165,6 +179,7 @@ MultiframeBenchmarkResult run_multiframe_benchmark(MultiframeBenchmarkOptions op
       .iterations = 0,
       .luma_smoothness = options.luma_smoothness,
       .chroma_smoothness = options.chroma_smoothness,
+      .stop_on_discrepancy = false,
       .noise = NoiseModel{.read_noise = 0.0025, .shot_noise_scale = 0.0018},
   };
   JointReconstructionResult initialization =
@@ -206,6 +221,22 @@ MultiframeBenchmarkResult run_multiframe_benchmark(MultiframeBenchmarkOptions op
       .solver_stats = robust_no_psf.stats,
       .has_solver_stats = true,
   });
+
+  if(!estimated_relative_psfs.empty()) {
+    std::vector<JointCfaFrame> auto_psf_inputs = joint_inputs;
+    for(std::size_t i = 0; i < auto_psf_inputs.size(); ++i) {
+      auto_psf_inputs[i].psf_sigma = estimated_relative_psfs[i];
+    }
+    JointReconstructionResult auto_psf =
+        reconstruct_joint_cfa(auto_psf_inputs, robust_options);
+    benchmark.methods.push_back(MultiframeBenchmarkMethod{
+        .name = "joint-robust-auto-psf",
+        .image = std::move(auto_psf.image),
+        .confidence = std::make_unique<RgbImage>(std::move(auto_psf.confidence)),
+        .solver_stats = auto_psf.stats,
+        .has_solver_stats = true,
+    });
+  }
 
   JointReconstructionResult robust = reconstruct_joint_cfa(joint_inputs, robust_options);
   benchmark.methods.push_back(MultiframeBenchmarkMethod{

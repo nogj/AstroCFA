@@ -48,6 +48,7 @@ void robust_solver_rejects_transient_sample() {
       frames, astrocfa::JointReconstructionOptions{
                   .iterations = 8,
                   .chroma_smoothness = 0.0,
+                  .stop_on_discrepancy = false,
               });
 
   require(std::abs(result.image.pixel(4, 4).r - 0.20F) < 0.03F,
@@ -114,6 +115,27 @@ void psf_usage_is_reported() {
           "Maximum PSF sigma should be reported");
 }
 
+void discrepancy_stops_at_noise_consistent_solution() {
+  astrocfa::CfaFrame first = constant_cfa();
+  astrocfa::CfaFrame second = constant_cfa();
+  const astrocfa::JointReconstructionResult result =
+      astrocfa::reconstruct_joint_cfa(
+          {{.cfa = &first}, {.cfa = &second}},
+          astrocfa::JointReconstructionOptions{
+              .iterations = 10,
+              .luma_smoothness = 0.0,
+              .chroma_smoothness = 0.0,
+              .stop_on_discrepancy = true,
+              .minimum_iterations = 1,
+          });
+  require(result.stats.stopped_by_discrepancy,
+          "Noise-consistent solution should trigger discrepancy stopping");
+  require(result.stats.iterations == 1,
+          "Discrepancy stopping should honor the minimum iteration count");
+  require(result.stats.final_reduced_chi_square < 1.0e-10,
+          "Exact repeated data should have negligible reduced chi-square");
+}
+
 } // namespace
 
 int main() {
@@ -123,6 +145,7 @@ int main() {
     dithers_increase_high_resolution_channel_coverage();
     invalid_psf_sigma_is_rejected();
     psf_usage_is_reported();
+    discrepancy_stops_at_noise_consistent_solution();
   } catch(const std::exception &error) {
     std::cerr << "joint_reconstruction_tests failed: " << error.what() << "\n";
     return 1;

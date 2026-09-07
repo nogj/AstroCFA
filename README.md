@@ -73,7 +73,8 @@ and reproducible long-running workflows.
 
 ```bash
 astrocfa-nogui inspect input.dng
-astrocfa-nogui inspect input.dng --linear-cfa --star-candidates --noise-model --frequency-cfa
+astrocfa-nogui inspect input.dng --linear-cfa --star-candidates --estimate-psf \
+  --noise-model --frequency-cfa
 astrocfa-nogui benchmark-debayer
 astrocfa-nogui benchmark-debayer --width 192 --height 128 --seed 7 --export-prefix bench/astro
 astrocfa-nogui benchmark-joint --frames 4 --noise astro --seeing fixed
@@ -90,6 +91,8 @@ astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
   -o joint-linear.tif --export-confidence joint-confidence.tif
 astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
   --psf-sigma 0.72 --psf-sigma 0.91 --psf-sigma 0.68 -o joint-psf.tif
+astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
+  --auto-register --auto-psf -o joint-auto-psf.tif
 astrocfa-nogui develop input.dng --method bilinear-baseline -o baseline.tif
 astrocfa-nogui develop input.dng --method malvar-baseline -o malvar.tif
 astrocfa-nogui develop input.dng --method residual-interpolation -o ri.tif
@@ -124,9 +127,9 @@ AstroCFA's reconstruction work measurable rather than merely aesthetic.
 `benchmark-joint` compares demosaic-each-light-then-average with phase-aware CFA
 initialization, non-robust joint inversion, and robust joint inversion. It
 synthesizes known dithers, Poisson-Gaussian noise, optional per-frame seeing
-changes, and transient samples. The variable-seeing mode includes a direct
-ablation between ignoring the PSF and supplying each light's known Gaussian PSF
-to the forward/adjoint operator.
+changes, and transient samples. The variable-seeing mode includes direct
+ablations for ignoring the PSF, estimating it from CFA samples, and supplying
+each light's known Gaussian PSF to the forward/adjoint operator.
 The tuned priors remain exposed as `--luma-smoothness` and
 `--chroma-smoothness` for reproducible ablations.
 
@@ -149,7 +152,16 @@ single-frame direct samples exact; with multiple noisy lights, measurements are
 weighted fidelity constraints so the common estimate can denoise. The solver
 models translation, bilinear sampling, and an optional Gaussian PSF per light.
 Use repeated `--psf-sigma` values in sensor pixels (`FWHM / 2.35482`) when PSF
-estimates are available. PSF estimation, distortion, tiled memory use, and
+estimates are available. `--auto-psf` instead detects isolated unsaturated stars
+on a CFA-safe luminance proxy, fits their profiles against the original mosaic
+samples, and models each light's blur relative to the sharpest frame. Its
+default strength is deliberately conservative and can be reproduced with
+`--auto-psf-strength 0.75`.
+
+Joint reconstruction stops by default when the robust reduced chi-square reaches
+the Poisson-Gaussian noise target, after at least two iterations. This discrepancy
+principle limits noise fitting; `--no-discrepancy-stop` retains a fixed-iteration
+ablation. Spatially varying/non-Gaussian PSFs, distortion, tiled memory use, and
 subpixel star registration remain future work. Scale 1 is the memory-conscious
 default for joint reconstruction; scale 2 is available explicitly for dithered
 datasets.

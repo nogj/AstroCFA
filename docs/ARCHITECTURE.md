@@ -255,21 +255,34 @@ support is immutable in the single-frame case. With multiple noisy lights it is
 a weighted fidelity constraint rather than a hard lock, allowing the common
 latent estimate to denoise conflicting observations. The solver exports
 normalized R/G/B support as a confidence image and reports coverage, outlier
-count, normalized error, and initial/final CFA RMSE.
+count, normalized error, initial/final CFA RMSE, and robust reduced chi-square.
+By default, iteration stops once that chi-square is consistent with the declared
+Poisson-Gaussian noise model. A minimum iteration count prevents the initialized
+estimate from terminating the solve before robust rejection has begun.
 
 The deterministic `benchmark-joint` harness compares demosaic-then-average,
-phase-aware initialization, PSF-aware least-squares joint inversion, Huber-robust joint
-inversion without PSF information, and PSF-aware robust inversion against known
-RGB truth. It reports global RGB/chroma errors plus
-stellar aperture flux, FWHM, elongation, false color, and luminance errors. Its
-variable-seeing mode is an explicit ablation of the PSF operator.
+phase-aware initialization, PSF-aware least-squares joint inversion, Huber-robust
+joint inversion without PSF information, auto-estimated PSF inversion, and
+PSF-aware robust inversion against known RGB truth. It reports global RGB/chroma
+errors plus stellar aperture flux, FWHM, elongation, false color, and luminance errors. Its
+variable-seeing mode is an explicit ablation of the PSF operator and estimator.
 
 Each light may provide a Gaussian PSF sigma in sensor pixels. The forward model
 combines that convolution with subpixel bilinear sampling in one normalized
 stencil; residual backprojection uses its exact transpose. PSF updates use a
 conservative SIRT normalization, flux-conserving bilateral luminance diffusion,
 and the existing chroma prior. Translation-only inputs retain the earlier
-diagonal update and exact single-frame CFA behavior. The model does not yet cover
+diagonal update and exact single-frame CFA behavior.
+
+Automatic PSF estimation detects isolated, unsaturated stars on the CFA-safe
+luminance proxy, rejects low-SNR and elongated candidates, then fits a circular
+Gaussian directly to original Bayer samples. Separate per-channel amplitude and
+background nuisance terms avoid treating stellar color as profile structure.
+Robust median/MAD aggregation produces one seeing estimate per frame. Since the
+latent image already contains the sharpest observation's optical blur, only the
+additional variance relative to the sharpest frame is passed to the solver, with
+a conservative default strength of 0.75. Individual star measurements are kept
+for auditability and a future spatial PSF field. The model does not yet cover
 non-Gaussian/spatially varying PSFs, lens distortion, photometric scale,
 background offsets, tiled execution, or inverse-Hessian uncertainty.
 

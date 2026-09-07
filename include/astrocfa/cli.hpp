@@ -14,7 +14,7 @@ inline void print_cli_help(std::ostream &out, std::string_view executable) {
       << "  " << executable << " --help\n"
       << "  " << executable << " --version\n"
       << "  " << executable
-      << " inspect <input-raw-or-dng> [--linear-cfa] [--star-candidates] [--noise-model] [--frequency-cfa]\n"
+      << " inspect <input-raw-or-dng> [--linear-cfa] [--star-candidates] [--estimate-psf] [--noise-model] [--frequency-cfa]\n"
       << "  " << executable
       << " develop <input-raw-or-dng> [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [--dark-excludes-bias] [--no-cosmetic-correction] [--method bilinear-baseline|malvar-baseline|residual-interpolation|frequency-guided|inverse-refine] [-o output.tif|jpg] [--preview-stretch none|astro] [--jpeg-quality 1..100] [--inverse-iterations n] [--chroma-smoothness v] [--alias-suppression v] [--edge-sensitivity v] [--star-chroma-guard v] [--star-luma-threshold v] [--export-alias-risk map.tif|jpg] [--export-residual-map map.tif|jpg] [--export-defect-map map.tif|jpg]\n"
       << "  " << executable
@@ -24,7 +24,7 @@ inline void print_cli_help(std::ostream &out, std::string_view executable) {
       << "  " << executable
       << " benchmark-joint [--width n] [--height n] [--frames n] [--iterations n] [--seed n] [--noise none|astro] [--seeing fixed|variable] [--transients n] [--luma-smoothness v] [--chroma-smoothness v] [--export-prefix path]\n"
       << "  " << executable
-      << " stack <input-raw-or-dng>... [--joint-reconstruct] [--cfa-drizzle] [--auto-register] [--scale 1|2] [--offset dx,dy]... [--psf-sigma pixels]... [--iterations n] [--luma-smoothness v] [--chroma-smoothness v] [--huber-sigma v] [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [-o output.tif|jpg] [--export-confidence map.tif|jpg]\n\n"
+      << " stack <input-raw-or-dng>... [--joint-reconstruct] [--cfa-drizzle] [--auto-register] [--auto-psf|--psf-sigma pixels]... [--auto-psf-strength 0..1] [--scale 1|2] [--offset dx,dy]... [--iterations n] [--no-discrepancy-stop] [--minimum-iterations n] [--discrepancy-target v] [--luma-smoothness v] [--chroma-smoothness v] [--huber-sigma v] [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [-o output.tif|jpg] [--export-confidence map.tif|jpg]\n\n"
       << "Initial modes:\n"
       << "  faithful-astro   Conservative reconstruction from measured CFA samples\n"
       << "  star-preserve    Preserve stellar PSF shape and color discipline\n"

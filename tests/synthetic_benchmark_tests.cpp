@@ -3,6 +3,7 @@
 #include "astrocfa/reconstruction_metrics.hpp"
 #include "astrocfa/synthetic_astro_scene.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 
@@ -149,14 +150,24 @@ void psf_aware_solver_recovers_variable_seeing_detail() {
   const auto &individual = benchmark.methods.front().metrics;
   const auto &without_psf = benchmark.methods[3].metrics;
   const auto &with_psf = benchmark.methods.back().metrics;
+  const auto auto_psf = std::find_if(
+      benchmark.methods.begin(), benchmark.methods.end(),
+      [](const astrocfa::MultiframeBenchmarkMethod &method) {
+        return method.name == "joint-robust-auto-psf";
+      });
   require(benchmark.methods[3].name == "joint-robust-no-psf",
           "Benchmark should retain the PSF ablation");
+  require(auto_psf != benchmark.methods.end(),
+          "Variable-seeing benchmark should estimate every frame PSF");
   require(with_psf.rgb_rmse < individual.rgb_rmse,
           "PSF-aware joint solve should beat individual demosaic RGB error");
   require(with_psf.star_fwhm_relative_error < without_psf.star_fwhm_relative_error,
           "PSF-aware forward model should improve FWHM recovery");
   require(with_psf.chroma_mae < without_psf.chroma_mae,
           "PSF-aware forward model should improve chroma recovery");
+  require(auto_psf->metrics.star_fwhm_relative_error <
+              without_psf.star_fwhm_relative_error,
+          "Auto-estimated PSF should improve FWHM over the PSF-blind solve");
 }
 
 } // namespace

@@ -9,6 +9,7 @@
 #include "astrocfa/multiframe_benchmark.hpp"
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/output_transform.hpp"
+#include "astrocfa/psf_estimator.hpp"
 #include "astrocfa/raw_loader.hpp"
 #include "astrocfa/raw_inspector.hpp"
 #include "astrocfa/reconstruction_metrics.hpp"
@@ -326,17 +327,20 @@ int main(int argc, char **argv) {
       astrocfa::write_inspection_report(inspection, std::cout);
       bool linear_cfa = false;
       bool star_candidates = false;
+      bool estimate_psf = false;
       bool noise_model = false;
       bool frequency_cfa = false;
       for(int i = 3; i < argc; ++i) {
         const std::string option = argv[i];
         linear_cfa = linear_cfa || option == "--linear-cfa";
         star_candidates = star_candidates || option == "--star-candidates";
+        estimate_psf = estimate_psf || option == "--estimate-psf";
         noise_model = noise_model || option == "--noise-model";
         frequency_cfa = frequency_cfa || option == "--frequency-cfa";
       }
 
-      if(linear_cfa || star_candidates || noise_model || frequency_cfa) {
+      if(linear_cfa || star_candidates || estimate_psf || noise_model ||
+         frequency_cfa) {
         const auto frame = astrocfa::load_linear_cfa_file(argv[2]);
         if(linear_cfa) {
           double sum = 0.0;
@@ -373,6 +377,17 @@ int main(int argc, char **argv) {
                     << "  largest candidate area: " << stars.largest_area
                     << " proxy samples\n"
                     << "  brightest proxy signal: " << stars.brightest << "\n";
+        }
+        if(estimate_psf) {
+          const astrocfa::PsfEstimate psf = astrocfa::estimate_cfa_psf(frame.cfa);
+          std::cout << "\nCFA-safe PSF estimate:\n"
+                    << "  valid: " << (psf.valid ? "yes" : "no") << "\n"
+                    << "  candidates: " << psf.candidates << "\n"
+                    << "  stars used: " << psf.used_stars << "\n"
+                    << "  sigma: " << psf.sigma << " sensor pixels\n"
+                    << "  FWHM: " << psf.fwhm << " sensor pixels\n"
+                    << "  sigma scatter: " << psf.scatter << "\n"
+                    << "  median elongation: " << psf.median_elongation << "\n";
         }
         if(noise_model) {
           const astrocfa::NoiseModel model;
@@ -819,6 +834,16 @@ int main(int argc, char **argv) {
                 << "  injected transients: " << benchmark.injected_transients << "\n"
                 << "  note: lower errors are better; solver RMSE uses offsets and PSF.\n"
                 << "  note: direct_first_cfa_mae intentionally ignores both.\n";
+      for(std::size_t i = 0; i < benchmark.psf_estimates.size(); ++i) {
+        const astrocfa::PsfEstimate &estimate = benchmark.psf_estimates[i];
+        std::cout << "  estimated PSF frame " << i << ": valid="
+                  << (estimate.valid ? "yes" : "no") << " FWHM=" << estimate.fwhm
+                  << " stars=" << estimate.used_stars;
+        if(i < benchmark.relative_psf_sigmas.size()) {
+          std::cout << " relative_sigma=" << benchmark.relative_psf_sigmas[i];
+        }
+        std::cout << "\n";
+      }
       for(const auto &method : benchmark.methods) {
         write_multiframe_benchmark_row(method, std::cout);
       }
@@ -852,12 +877,18 @@ int main(int argc, char **argv) {
     bool cfa_drizzle = false;
     bool joint_reconstruct = false;
     bool auto_register = false;
+    bool auto_psf = false;
+    double auto_psf_strength = 0.75;
+    bool auto_psf_strength_explicit = false;
     std::size_t scale = 2;
     bool scale_explicit = false;
     std::size_t iterations = 6;
     double luma_smoothness = 0.2;
     double chroma_smoothness = 0.9;
     double huber_sigma = 4.0;
+    bool stop_on_discrepancy = true;
+    std::size_t minimum_iterations = 2;
+    double discrepancy_target = 1.0;
     std::string output_path;
     std::string confidence_path;
     CalibrationCliOptions calibration_options;
@@ -870,6 +901,11 @@ int main(int argc, char **argv) {
         joint_reconstruct = true;
       } else if(arg == "--auto-register") {
         auto_register = true;
+      } else if(arg == "--auto-psf") {
+        auto_psf = true;
+      } else if(arg == "--auto-psf-strength" && i + 1 < argc) {
+        auto_psf_strength = std::stod(argv[++i]);
+        auto_psf_strength_explicit = true;
       } else if(arg == "--scale" && i + 1 < argc) {
         scale = static_cast<std::size_t>(std::stoul(argv[++i]));
         scale_explicit = true;
@@ -881,6 +917,12 @@ int main(int argc, char **argv) {
         chroma_smoothness = std::stod(argv[++i]);
       } else if(arg == "--huber-sigma" && i + 1 < argc) {
         huber_sigma = std::stod(argv[++i]);
+      } else if(arg == "--no-discrepancy-stop") {
+        stop_on_discrepancy = false;
+      } else if(arg == "--minimum-iterations" && i + 1 < argc) {
+        minimum_iterations = static_cast<std::size_t>(std::stoul(argv[++i]));
+      } else if(arg == "--discrepancy-target" && i + 1 < argc) {
+        discrepancy_target = std::stod(argv[++i]);
       } else if(arg == "--offset" && i + 1 < argc) {
         offsets.push_back(parse_offset(argv[++i]));
       } else if(arg == "--psf-sigma" && i + 1 < argc) {
@@ -941,6 +983,18 @@ int main(int argc, char **argv) {
       std::cerr << "--psf-sigma requires --joint-reconstruct.\n";
       return 2;
     }
+    if(auto_psf && !joint_reconstruct) {
+      std::cerr << "--auto-psf requires --joint-reconstruct.\n";
+      return 2;
+    }
+    if(auto_psf && !psf_sigmas.empty()) {
+      std::cerr << "Use --auto-psf or --psf-sigma, not both.\n";
+      return 2;
+    }
+    if(auto_psf_strength_explicit && !auto_psf) {
+      std::cerr << "--auto-psf-strength requires --auto-psf.\n";
+      return 2;
+    }
     if(joint_reconstruct && !cfa_drizzle && !scale_explicit) {
       scale = 1;
     }
@@ -976,6 +1030,20 @@ int main(int argc, char **argv) {
         }
       }
 
+      std::vector<astrocfa::PsfEstimate> psf_estimates;
+      std::vector<double> effective_psf_sigmas(inputs.size(), 0.0);
+      for(std::size_t i = 0; i < psf_sigmas.size(); ++i) {
+        effective_psf_sigmas[i] = psf_sigmas[i];
+      }
+      if(auto_psf) {
+        psf_estimates.reserve(calibrated_frames.size());
+        for(const astrocfa::CfaFrame &frame : calibrated_frames) {
+          psf_estimates.push_back(astrocfa::estimate_cfa_psf(frame));
+        }
+        effective_psf_sigmas =
+            astrocfa::relative_psf_sigmas(psf_estimates, auto_psf_strength);
+      }
+
       const auto print_coverage = [](const char *name,
                                      const astrocfa::DrizzleCoverageStats &coverage) {
         const double percent =
@@ -1003,6 +1071,16 @@ int main(int argc, char **argv) {
                     << effective_offsets[i].dx << " dy=" << effective_offsets[i].dy
                     << " score=" << registrations[i].score
                     << " matched=" << registrations[i].matched_samples << "\n";
+        }
+      }
+      if(auto_psf) {
+        for(std::size_t i = 0; i < psf_estimates.size(); ++i) {
+          const astrocfa::PsfEstimate &estimate = psf_estimates[i];
+          std::cout << "  PSF frame " << i << ": FWHM=" << estimate.fwhm
+                    << " sigma=" << estimate.sigma
+                    << " relative_sigma=" << effective_psf_sigmas[i]
+                    << " stars=" << estimate.used_stars
+                    << " elongation=" << estimate.median_elongation << "\n";
         }
       }
       if(!calibration_options.bias_path.empty() || !calibration_options.dark_path.empty() ||
@@ -1036,7 +1114,7 @@ int main(int argc, char **argv) {
           joint_frames.push_back(astrocfa::JointCfaFrame{
               .cfa = &calibrated_frames[i],
               .offset = effective_offsets[i],
-              .psf_sigma = i < psf_sigmas.size() ? psf_sigmas[i] : 0.0,
+              .psf_sigma = effective_psf_sigmas[i],
           });
         }
         const astrocfa::JointReconstructionResult result =
@@ -1047,14 +1125,20 @@ int main(int argc, char **argv) {
                                   .huber_sigma = huber_sigma,
                                   .luma_smoothness = luma_smoothness,
                                   .chroma_smoothness = chroma_smoothness,
+                                  .stop_on_discrepancy = stop_on_discrepancy,
+                                  .minimum_iterations = minimum_iterations,
+                                  .discrepancy_target = discrepancy_target,
                               });
         std::cout << "  joint output dimensions: " << result.image.width() << " x "
                   << result.image.height() << "\n"
-                  << "  joint iterations: " << result.stats.iterations << "\n"
+                  << "  joint iterations: " << result.stats.iterations << "/"
+                  << result.stats.maximum_iterations << "\n"
                   << "  joint luma/chroma smoothness: " << luma_smoothness << " / "
                   << chroma_smoothness << "\n"
-                  << "  PSF sigmas supplied: " << psf_sigmas.size()
-                  << " (missing values use 0 px)\n"
+                  << "  PSF mode: "
+                  << (auto_psf ? "CFA-estimated relative seeing"
+                               : (psf_sigmas.empty() ? "disabled" : "manual"))
+                  << "\n"
                   << "  PSF-aware frames/range: " << result.stats.psf_frames << " / "
                   << result.stats.minimum_psf_sigma << ".."
                   << result.stats.maximum_psf_sigma << " px\n"
@@ -1062,6 +1146,11 @@ int main(int argc, char **argv) {
                   << "  initial/final CFA RMSE: " << std::fixed
                   << std::setprecision(8) << result.stats.initial_rmse << " / "
                   << result.stats.final_rmse << "\n"
+                  << "  initial/final reduced chi-square: "
+                  << result.stats.initial_reduced_chi_square << " / "
+                  << result.stats.final_reduced_chi_square << "\n"
+                  << "  stopped by discrepancy: "
+                  << (result.stats.stopped_by_discrepancy ? "yes" : "no") << "\n"
                   << "  final normalized MAE: " << result.stats.final_normalized_mae
                   << "\n"
                   << "  robust outliers: " << result.stats.robust_outliers << "\n"
