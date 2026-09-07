@@ -193,6 +193,11 @@ void write_calibration_report(const astrocfa::CalibrationStats &stats, std::ostr
       << "  calibration invalid samples: " << stats.invalid_samples << "\n"
       << "  calibration clipped samples: " << stats.clipped_samples << "\n"
       << "  calibration flat floor samples: " << stats.flat_floor_samples << "\n"
+      << "  detected hot pixels: " << stats.hot_pixels << "\n"
+      << "  detected dead pixels: " << stats.dead_pixels << "\n"
+      << "  invalid master pixels: " << stats.invalid_master_pixels << "\n"
+      << "  cosmetically repaired pixels: " << stats.repaired_pixels << "\n"
+      << "  unrepaired defect pixels: " << stats.unrepaired_pixels << "\n"
       << "  calibration mean before: " << std::fixed << std::setprecision(8)
       << stats.mean_before << "\n"
       << "  calibration mean after: " << stats.mean_after << "\n"
@@ -394,6 +399,7 @@ int main(int argc, char **argv) {
       std::string output_path;
       std::string alias_risk_path;
       std::string residual_map_path;
+      std::string defect_map_path;
       std::string preview_stretch = "none";
       astrocfa::ImageWriteOptions write_options;
       astrocfa::InverseRefinementOptions inverse_options;
@@ -434,10 +440,14 @@ int main(int argc, char **argv) {
           calibration_options.flat_dir = argv[++i];
         } else if(arg == "--dark-excludes-bias") {
           calibration_options.options.dark_includes_bias = false;
+        } else if(arg == "--no-cosmetic-correction") {
+          calibration_options.options.cosmetic.enabled = false;
         } else if(arg == "--export-alias-risk" && i + 1 < argc) {
           alias_risk_path = argv[++i];
         } else if(arg == "--export-residual-map" && i + 1 < argc) {
           residual_map_path = argv[++i];
+        } else if(arg == "--export-defect-map" && i + 1 < argc) {
+          defect_map_path = argv[++i];
         } else {
           throw std::invalid_argument("Unknown develop option: " + arg);
         }
@@ -509,6 +519,12 @@ int main(int argc, char **argv) {
             residual_map_path, write_options);
         std::cout << "  remosaic residual map: " << residual_map_path << "\n";
       }
+      if(!defect_map_path.empty()) {
+        astrocfa::write_rgb_image(
+            astrocfa::make_sensor_defect_map(calibrated.defects), defect_map_path,
+            write_options);
+        std::cout << "  sensor defect map: " << defect_map_path << "\n";
+      }
     } catch(const std::exception &error) {
       std::cerr << "develop failed: " << error.what() << "\n";
       return 1;
@@ -525,6 +541,7 @@ int main(int argc, char **argv) {
     try {
       std::string method = "inverse-refine";
       std::string output_path;
+      std::string defect_map_path;
       std::string preview_stretch = "none";
       astrocfa::ImageWriteOptions write_options;
       astrocfa::InverseRefinementOptions inverse_options;
@@ -566,6 +583,10 @@ int main(int argc, char **argv) {
           calibration_options.flat_dir = argv[++i];
         } else if(arg == "--dark-excludes-bias") {
           calibration_options.options.dark_includes_bias = false;
+        } else if(arg == "--no-cosmetic-correction") {
+          calibration_options.options.cosmetic.enabled = false;
+        } else if(arg == "--export-defect-map" && i + 1 < argc) {
+          defect_map_path = argv[++i];
         } else {
           throw std::invalid_argument("Unknown calibrate option: " + arg);
         }
@@ -606,6 +627,12 @@ int main(int argc, char **argv) {
         std::cout << "  output: " << output_path << "\n";
       } else {
         std::cout << "  note: no output path provided; use -o calibrated.tif or -o preview.jpg.\n";
+      }
+      if(!defect_map_path.empty()) {
+        astrocfa::write_rgb_image(
+            astrocfa::make_sensor_defect_map(calibrated.defects), defect_map_path,
+            write_options);
+        std::cout << "  sensor defect map: " << defect_map_path << "\n";
       }
     } catch(const std::exception &error) {
       std::cerr << "calibrate failed: " << error.what() << "\n";

@@ -34,6 +34,16 @@ astrocfa::CfaFrame filled_frame(float value) {
   return frame;
 }
 
+astrocfa::CfaFrame filled_frame(std::size_t width, std::size_t height, float value) {
+  astrocfa::CfaFrame frame(width, height, astrocfa::BayerPattern{});
+  for(std::size_t y = 0; y < frame.height(); ++y) {
+    for(std::size_t x = 0; x < frame.width(); ++x) {
+      frame.set_sample(x, y, astrocfa::CfaSample{.value = value, .valid = true});
+    }
+  }
+  return frame;
+}
+
 void subtracts_dark_without_double_subtracting_bias_by_default() {
   astrocfa::CfaFrame light = filled_frame(0.50F);
   astrocfa::CfaFrame bias = filled_frame(0.03F);
@@ -113,6 +123,45 @@ void master_builder_rejects_incompatible_dimensions() {
   require(threw, "Master builder should reject incompatible frame dimensions");
 }
 
+void detects_and_repairs_master_supported_sensor_defects() {
+  astrocfa::CfaFrame light = filled_frame(12, 12, 0.50F);
+  astrocfa::CfaFrame dark = filled_frame(12, 12, 0.01F);
+  astrocfa::CfaFrame flat = filled_frame(12, 12, 0.50F);
+  dark.set_sample(6, 6, 0.40F);
+  flat.set_sample(7, 7, 0.02F);
+
+  const astrocfa::CalibrationResult result = astrocfa::calibrate_cfa(
+      light, astrocfa::CalibrationInputs{.dark = &dark, .flat = &flat});
+
+  require(result.defects.has(6, 6, astrocfa::SensorDefect::hot),
+          "Dark outlier should be marked hot");
+  require(result.defects.has(7, 7, astrocfa::SensorDefect::dead),
+          "Low flat response should be marked dead");
+  require(result.stats.hot_pixels == 1, "Hot pixel stats should be exact");
+  require(result.stats.dead_pixels == 1, "Dead pixel stats should be exact");
+  require(result.stats.repaired_pixels == 2, "Both defects should be repaired");
+  require(result.stats.unrepaired_pixels == 0, "Interior defects should have neighbors");
+  require_near(result.cfa.sample(6, 6), 0.49, 1.0e-5,
+               "Hot pixel should use same-phase calibrated neighbors");
+  require_near(result.cfa.sample(7, 7), 0.49, 1.0e-5,
+               "Dead pixel should use same-phase calibrated neighbors");
+}
+
+void can_disable_cosmetic_correction() {
+  astrocfa::CfaFrame light = filled_frame(12, 12, 0.50F);
+  astrocfa::CfaFrame dark = filled_frame(12, 12, 0.01F);
+  dark.set_sample(6, 6, 0.40F);
+
+  const astrocfa::CalibrationResult result = astrocfa::calibrate_cfa(
+      light, astrocfa::CalibrationInputs{
+                 .dark = &dark,
+                 .options = {.cosmetic = {.enabled = false}},
+             });
+  require(!result.defects.defective(6, 6), "Disabled correction should skip detection");
+  require_near(result.cfa.sample(6, 6), 0.10, 1.0e-5,
+               "Disabled correction should preserve ordinary calibration result");
+}
+
 } // namespace
 
 int main() {
@@ -122,6 +171,8 @@ int main() {
     normalizes_flat_per_cfa_phase();
     builds_median_master_and_rejects_outlier();
     master_builder_rejects_incompatible_dimensions();
+    detects_and_repairs_master_supported_sensor_defects();
+    can_disable_cosmetic_correction();
   } catch(const std::exception &error) {
     std::cerr << "calibration_tests failed: " << error.what() << "\n";
     return 1;

@@ -72,4 +72,27 @@ RgbImage make_remosaic_residual_map(const CfaFrame &measured,
   return image;
 }
 
+RgbImage make_sensor_defect_map(const DefectMap &defects) {
+  RgbImage image(defects.width(), defects.height());
+  for(std::size_t y = 0; y < defects.height(); ++y) {
+    for(std::size_t x = 0; x < defects.width(); ++x) {
+      const bool hot = defects.has(x, y, SensorDefect::hot);
+      const bool dead = defects.has(x, y, SensorDefect::dead);
+      const bool invalid = defects.has(x, y, SensorDefect::invalid_master);
+      RgbPixel color;
+      if(invalid) {
+        color = RgbPixel{.r = 1.0F, .g = 1.0F, .b = 0.0F};
+      } else if(hot && dead) {
+        color = RgbPixel{.r = 1.0F, .g = 0.0F, .b = 1.0F};
+      } else if(hot) {
+        color = RgbPixel{.r = 1.0F, .g = 0.0F, .b = 0.0F};
+      } else if(dead) {
+        color = RgbPixel{.r = 0.0F, .g = 0.5F, .b = 1.0F};
+      }
+      image.set_pixel(x, y, color);
+    }
+  }
+  return image;
+}
+
 } // namespace astrocfa

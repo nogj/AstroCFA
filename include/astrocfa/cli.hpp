@@ -16,9 +16,9 @@ inline void print_cli_help(std::ostream &out, std::string_view executable) {
       << "  " << executable
       << " inspect <input-raw-or-dng> [--linear-cfa] [--star-candidates] [--noise-model] [--frequency-cfa]\n"
       << "  " << executable
-      << " develop <input-raw-or-dng> [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [--dark-excludes-bias] [--method bilinear-baseline|malvar-baseline|residual-interpolation|frequency-guided|inverse-refine] [-o output.tif|jpg] [--preview-stretch none|astro] [--jpeg-quality 1..100] [--inverse-iterations n] [--chroma-smoothness v] [--alias-suppression v] [--edge-sensitivity v] [--star-chroma-guard v] [--star-luma-threshold v] [--export-alias-risk map.tif|jpg] [--export-residual-map map.tif|jpg]\n"
+      << " develop <input-raw-or-dng> [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [--dark-excludes-bias] [--no-cosmetic-correction] [--method bilinear-baseline|malvar-baseline|residual-interpolation|frequency-guided|inverse-refine] [-o output.tif|jpg] [--preview-stretch none|astro] [--jpeg-quality 1..100] [--inverse-iterations n] [--chroma-smoothness v] [--alias-suppression v] [--edge-sensitivity v] [--star-chroma-guard v] [--star-luma-threshold v] [--export-alias-risk map.tif|jpg] [--export-residual-map map.tif|jpg] [--export-defect-map map.tif|jpg]\n"
       << "  " << executable
-      << " calibrate <input-raw-or-dng> [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [--dark-excludes-bias] [-o output.tif|jpg] [--method inverse-refine]\n"
+      << " calibrate <input-raw-or-dng> [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [--dark-excludes-bias] [--no-cosmetic-correction] [--export-defect-map map.tif|jpg] [-o output.tif|jpg] [--method inverse-refine]\n"
       << "  " << executable
       << " benchmark-debayer [--width n] [--height n] [--seed n] [--noise none|astro] [--export-prefix path]\n"
       << "  " << executable

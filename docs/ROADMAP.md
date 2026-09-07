@@ -28,7 +28,8 @@
 ## Milestone 3: Calibration Frames
 
 - Bias, dark, flat, and dark-flat application.
-- Hot/dead pixel detection.
+- Hot/dead pixel detection from calibration masters, with same-phase repair and
+  an exportable defect map. Implemented.
 - Robust master frame creation.
 - Rejection maps for cosmic rays and unstable pixels.
 

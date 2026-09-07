@@ -248,9 +248,13 @@ int main(int argc, char **argv) {
   auto *dark_path = new QLineEdit;
   auto *flat_path = new QLineEdit;
   auto *dark_includes_bias = new QCheckBox("Dark includes bias");
+  auto *cosmetic_correction = new QCheckBox("Cosmetic correction");
   dark_includes_bias->setChecked(true);
+  cosmetic_correction->setChecked(true);
   dark_includes_bias->setToolTip(
       "Disable only when the master dark was built after bias subtraction");
+  cosmetic_correction->setToolTip(
+      "Detect defects from dark/flat masters and repair from same-phase CFA neighbors");
   const auto add_master_row = [&](int row, const QString &label, QLineEdit *path) {
     path->setPlaceholderText("Optional master file or RAW directory");
     path->setClearButtonEnabled(true);
@@ -283,7 +287,8 @@ int main(int argc, char **argv) {
   add_master_row(0, "Bias", bias_path);
   add_master_row(1, "Dark", dark_path);
   add_master_row(2, "Flat", flat_path);
-  calibration_layout->addWidget(dark_includes_bias, 3, 1, 1, 3);
+  calibration_layout->addWidget(dark_includes_bias, 3, 1);
+  calibration_layout->addWidget(cosmetic_correction, 3, 2, 1, 2);
 
   auto *mode_group = new QGroupBox("Mode");
   auto *mode_layout = new QGridLayout(mode_group);
@@ -332,6 +337,9 @@ int main(int argc, char **argv) {
   overlay->addItem("image");
   overlay->addItem("alias risk");
   overlay->addItem("residual");
+  overlay->addItem("sensor defects");
+  overlay->setToolTip(
+      "Sensor defects: hot red, dead blue, mixed magenta, invalid master yellow");
   auto *zoom = new QComboBox;
   zoom->addItem("fit");
   zoom->addItem("100%");
@@ -401,6 +409,7 @@ int main(int argc, char **argv) {
   auto preview_image = std::make_shared<QImage>();
   auto alias_image = std::make_shared<QImage>();
   auto residual_image = std::make_shared<QImage>();
+  auto defect_image = std::make_shared<QImage>();
 
   const auto update_preview = [&]() {
     const QImage *selected = nullptr;
@@ -408,6 +417,8 @@ int main(int argc, char **argv) {
       selected = alias_image.get();
     } else if(overlay->currentText() == "residual") {
       selected = residual_image.get();
+    } else if(overlay->currentText() == "sensor defects") {
+      selected = defect_image.get();
     } else {
       selected = preview_image.get();
     }
@@ -555,6 +566,9 @@ int main(int argc, char **argv) {
               .flat = flat.cfa(),
               .options = astrocfa::CalibrationOptions{
                   .dark_includes_bias = dark_includes_bias->isChecked(),
+                  .cosmetic = astrocfa::CosmeticCorrectionOptions{
+                      .enabled = cosmetic_correction->isChecked(),
+                  },
               },
           });
       const ReconstructionPreset reconstruction =
@@ -567,6 +581,7 @@ int main(int argc, char **argv) {
       *alias_image = to_qimage(astrocfa::make_frequency_alias_risk_map(calibrated.cfa));
       *residual_image = to_qimage(
           astrocfa::make_remosaic_residual_map(calibrated.cfa, result.image));
+      *defect_image = to_qimage(astrocfa::make_sensor_defect_map(calibrated.defects));
       update_preview();
       report << "AstroCFA calibrated reconstruction\n"
              << "  input: " << input_path->text().toStdString() << "\n"
@@ -581,6 +596,12 @@ int main(int argc, char **argv) {
              << "  invalid samples: " << calibrated.stats.invalid_samples << "\n"
              << "  clipped samples: " << calibrated.stats.clipped_samples << "\n"
              << "  flat floor samples: " << calibrated.stats.flat_floor_samples << "\n"
+             << "  hot/dead pixels: " << calibrated.stats.hot_pixels << " / "
+             << calibrated.stats.dead_pixels << "\n"
+             << "  invalid master pixels: "
+             << calibrated.stats.invalid_master_pixels << "\n"
+             << "  repaired/unrepaired defects: " << calibrated.stats.repaired_pixels
+             << " / " << calibrated.stats.unrepaired_pixels << "\n"
              << "  mean before/after: " << std::fixed << std::setprecision(8)
              << calibrated.stats.mean_before << " / " << calibrated.stats.mean_after << "\n"
              << "  mean bias subtracted: " << calibrated.stats.mean_bias_subtracted << "\n"

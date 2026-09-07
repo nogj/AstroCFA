@@ -90,7 +90,8 @@ astrocfa-nogui develop input.dng --method frequency-guided -o preview.jpg
 astrocfa-nogui develop input.dng --method inverse-refine -o preview.jpg \
   --preview-stretch astro --export-alias-risk alias.tif --export-residual-map residual.tif
 astrocfa-nogui develop light.dng --bias master-bias.dng --dark master-dark.dng \
-  --flat master-flat.dng --method inverse-refine -o calibrated.tif
+  --flat master-flat.dng --method inverse-refine -o calibrated.tif \
+  --export-defect-map sensor-defects.tif
 ```
 
 `develop` writes scene-linear 16-bit RGB TIFF output or an 8-bit JPEG preview.
@@ -116,6 +117,13 @@ The inverse refinement path includes an optional star chroma guard for compact
 PSF-like highlights. It is designed to reduce false magenta/green star cores
 from unsupported Bayer chroma while preserving measured CFA samples exactly.
 
+Calibration includes CFA-phase-aware cosmetic correction when a dark or flat
+master is present. Hot pixels are local robust outliers in the dark; dead pixels
+are local response deficits in the flat. Detected samples are replaced by the
+median of valid, non-defective neighbors from the same Bayer phase before RGB
+reconstruction. The map remains available as a Qt overlay and through
+`--export-defect-map`; `--no-cosmetic-correction` preserves the uncorrected path.
+
 ## Status
 
 This repository is an early but runnable prototype. It includes RAW/DNG
@@ -125,7 +133,7 @@ CFA-safe star diagnostics, phase-aware drizzle accumulation, several non-neural
 demosaic candidates, frequency-guided CFA risk analysis, inverse chroma
 refinement, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
 GUI with real bias/dark/flat calibration, robust directory masters, and
-image/alias-risk/residual overlays.
+image/alias-risk/residual/sensor-defect overlays.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).

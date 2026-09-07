@@ -107,6 +107,20 @@ data because cosmic rays, unstable hot pixels, and occasional bad frames should
 not define a master. Persistent CFA master export is deferred until FITS/EXR
 support lands, so current directory masters are built in memory for the run.
 
+Cosmetic correction is derived exclusively from calibration masters. A dark
+sample is considered hot when it exceeds its same-phase local median by both a
+robust sigma threshold and an absolute signal floor. A flat sample is considered
+dead when its local same-phase response ratio and absolute deficit are both low.
+This dual criterion limits false positives across amp glow and flat-field
+gradients. Defective samples are excluded from flat phase normalization and are
+replaced after calibration by a median of valid, non-defective neighbors from
+the same CFA phase. If too few such measurements exist, the sample is marked
+invalid instead of being fabricated.
+
+The resulting defect map records hot, dead, and invalid-master evidence
+separately. It can be inspected in the GUI or exported by the CLI, and the run
+report records detected, repaired, and unrepaired counts.
+
 ## Baseline Reconstruction
 
 AstroCFA keeps deliberately explicit demosaic baselines. Bilinear is the lowest

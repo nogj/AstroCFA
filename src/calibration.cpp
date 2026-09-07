@@ -32,7 +32,8 @@ void require_compatible(const astrocfa::CfaFrame &light,
 
 void compute_flat_phase_means(const astrocfa::CfaFrame &light,
                               const astrocfa::CfaFrame *flat,
-                              double means[4]) {
+                              double means[4],
+                              const astrocfa::DefectMap *defects = nullptr) {
   for(int i = 0; i < 4; ++i) {
     means[i] = 1.0;
   }
@@ -44,6 +45,9 @@ void compute_flat_phase_means(const astrocfa::CfaFrame &light,
   std::size_t counts[4] = {0, 0, 0, 0};
   for(std::size_t y = 0; y < light.height(); ++y) {
     for(std::size_t x = 0; x < light.width(); ++x) {
+      if(defects != nullptr && defects->defective(x, y)) {
+        continue;
+      }
       const astrocfa::CfaSample sample = flat->sample_info(x, y);
       if(!sample.valid || sample.clipped) {
         continue;
@@ -131,9 +135,186 @@ double robust_pixel_value(std::vector<double> values, const astrocfa::MasterBuil
   return median_in_place(kept);
 }
 
+void collect_same_phase_neighbors(const astrocfa::CfaFrame &frame,
+                                  std::size_t x, std::size_t y,
+                                  std::size_t radius, std::vector<double> &values,
+                                  const astrocfa::DefectMap *defects = nullptr) {
+  values.clear();
+  const auto signed_x = static_cast<std::ptrdiff_t>(x);
+  const auto signed_y = static_cast<std::ptrdiff_t>(y);
+  const auto width = static_cast<std::ptrdiff_t>(frame.width());
+  const auto height = static_cast<std::ptrdiff_t>(frame.height());
+  const auto signed_radius = static_cast<std::ptrdiff_t>(radius);
+  for(std::ptrdiff_t phase_y = -signed_radius; phase_y <= signed_radius; ++phase_y) {
+    for(std::ptrdiff_t phase_x = -signed_radius; phase_x <= signed_radius; ++phase_x) {
+      if(phase_x == 0 && phase_y == 0) {
+        continue;
+      }
+      const std::ptrdiff_t neighbor_x = signed_x + phase_x * 2;
+      const std::ptrdiff_t neighbor_y = signed_y + phase_y * 2;
+      if(neighbor_x < 0 || neighbor_y < 0 || neighbor_x >= width ||
+         neighbor_y >= height) {
+        continue;
+      }
+      const auto nx = static_cast<std::size_t>(neighbor_x);
+      const auto ny = static_cast<std::size_t>(neighbor_y);
+      if(defects != nullptr && defects->defective(nx, ny)) {
+        continue;
+      }
+      const astrocfa::CfaSample sample = frame.sample_info(nx, ny);
+      if(sample.valid && !sample.clipped) {
+        values.push_back(sample.value);
+      }
+    }
+  }
+}
+
+astrocfa::DefectMap detect_sensor_defects(
+    const astrocfa::CfaFrame &light, const astrocfa::CfaFrame *dark,
+    const astrocfa::CfaFrame *flat,
+    const astrocfa::CosmeticCorrectionOptions &options,
+    astrocfa::CalibrationStats &stats) {
+  astrocfa::DefectMap defects(light.width(), light.height());
+  if(!options.enabled || (dark == nullptr && flat == nullptr)) {
+    return defects;
+  }
+  if(options.detection_radius == 0 || options.repair_radius == 0 ||
+     options.min_neighbors == 0) {
+    throw std::invalid_argument("Cosmetic correction radii and neighbor count must be positive");
+  }
+
+  const std::size_t neighborhood_width = options.detection_radius * 2U + 1U;
+  std::vector<double> neighbors;
+  std::vector<double> work;
+  std::vector<double> deviations;
+  neighbors.reserve(neighborhood_width * neighborhood_width - 1U);
+  work.reserve(neighbors.capacity());
+  deviations.reserve(neighbors.capacity());
+  for(std::size_t y = 0; y < light.height(); ++y) {
+    for(std::size_t x = 0; x < light.width(); ++x) {
+      if(dark != nullptr) {
+        const astrocfa::CfaSample sample = dark->sample_info(x, y);
+        if(!sample.valid) {
+          defects.add(x, y, astrocfa::SensorDefect::invalid_master);
+        } else if(sample.clipped) {
+          defects.add(x, y, astrocfa::SensorDefect::hot);
+        } else {
+          collect_same_phase_neighbors(*dark, x, y, options.detection_radius,
+                                       neighbors);
+          if(neighbors.size() >= options.min_neighbors) {
+            work.assign(neighbors.begin(), neighbors.end());
+            const double local_median = median_in_place(work);
+            deviations.clear();
+            for(double value : neighbors) {
+              deviations.push_back(std::abs(value - local_median));
+            }
+            const double robust_sigma = 1.4826 * median_in_place(deviations);
+            const double threshold =
+                std::max(options.hot_min_excess, options.hot_sigma * robust_sigma);
+            if(static_cast<double>(sample.value) - local_median > threshold) {
+              defects.add(x, y, astrocfa::SensorDefect::hot);
+            }
+          }
+        }
+      }
+
+      if(flat != nullptr) {
+        const astrocfa::CfaSample sample = flat->sample_info(x, y);
+        if(!sample.valid) {
+          defects.add(x, y, astrocfa::SensorDefect::invalid_master);
+        } else if(!sample.clipped) {
+          collect_same_phase_neighbors(*flat, x, y, options.detection_radius,
+                                       neighbors);
+          if(neighbors.size() >= options.min_neighbors) {
+            const double local_median = median_in_place(neighbors);
+            const double response = local_median > 0.0
+                                        ? static_cast<double>(sample.value) / local_median
+                                        : 1.0;
+            if(response < options.dead_response_ratio &&
+               local_median - static_cast<double>(sample.value) >
+                   options.dead_min_deficit) {
+              defects.add(x, y, astrocfa::SensorDefect::dead);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for(std::size_t y = 0; y < light.height(); ++y) {
+    for(std::size_t x = 0; x < light.width(); ++x) {
+      stats.hot_pixels += defects.has(x, y, astrocfa::SensorDefect::hot) ? 1U : 0U;
+      stats.dead_pixels += defects.has(x, y, astrocfa::SensorDefect::dead) ? 1U : 0U;
+      stats.invalid_master_pixels +=
+          defects.has(x, y, astrocfa::SensorDefect::invalid_master) ? 1U : 0U;
+    }
+  }
+  return defects;
+}
+
+void repair_sensor_defects(astrocfa::CfaFrame &cfa,
+                           const astrocfa::DefectMap &defects,
+                           const astrocfa::CosmeticCorrectionOptions &options,
+                           astrocfa::CalibrationStats &stats) {
+  const astrocfa::CfaFrame measured = cfa;
+  const std::size_t neighborhood_width = options.repair_radius * 2U + 1U;
+  std::vector<double> neighbors;
+  neighbors.reserve(neighborhood_width * neighborhood_width - 1U);
+  for(std::size_t y = 0; y < cfa.height(); ++y) {
+    for(std::size_t x = 0; x < cfa.width(); ++x) {
+      if(!defects.defective(x, y)) {
+        continue;
+      }
+      collect_same_phase_neighbors(measured, x, y, options.repair_radius,
+                                   neighbors, &defects);
+      if(neighbors.size() < options.min_neighbors) {
+        astrocfa::CfaSample sample = cfa.sample_info(x, y);
+        sample.valid = false;
+        cfa.set_sample(x, y, sample);
+        stats.unrepaired_pixels += 1;
+        continue;
+      }
+      const float repaired = static_cast<float>(median_in_place(neighbors));
+      cfa.set_sample(x, y, astrocfa::CfaSample{
+                               .value = repaired,
+                               .valid = true,
+                               .clipped = false,
+                           });
+      stats.repaired_pixels += 1;
+    }
+  }
+}
+
 } // namespace
 
 namespace astrocfa {
+
+DefectMap::DefectMap(std::size_t width, std::size_t height)
+    : width_(width), height_(height), flags_(width * height, 0U) {}
+
+std::size_t DefectMap::offset(std::size_t x, std::size_t y) const {
+  if(x >= width_ || y >= height_) {
+    throw std::out_of_range("Defect map coordinate out of range");
+  }
+  return y * width_ + x;
+}
+
+SensorDefect DefectMap::at(std::size_t x, std::size_t y) const {
+  return static_cast<SensorDefect>(flags_[offset(x, y)]);
+}
+
+bool DefectMap::has(std::size_t x, std::size_t y, SensorDefect defect) const {
+  const auto flag = static_cast<std::uint8_t>(defect);
+  return (flags_[offset(x, y)] & flag) != 0U;
+}
+
+bool DefectMap::defective(std::size_t x, std::size_t y) const {
+  return flags_[offset(x, y)] != 0U;
+}
+
+void DefectMap::add(std::size_t x, std::size_t y, SensorDefect defect) {
+  flags_[offset(x, y)] |= static_cast<std::uint8_t>(defect);
+}
 
 CalibrationResult calibrate_cfa(const CfaFrame &light, CalibrationInputs inputs) {
   require_compatible(light, inputs.bias, "Bias master");
@@ -142,8 +323,12 @@ CalibrationResult calibrate_cfa(const CfaFrame &light, CalibrationInputs inputs)
 
   CalibrationResult result{
       .cfa = CfaFrame(light.width(), light.height(), light.pattern()),
+      .defects = DefectMap(light.width(), light.height()),
   };
-  compute_flat_phase_means(light, inputs.flat, result.stats.flat_phase_mean);
+  result.defects = detect_sensor_defects(light, inputs.dark, inputs.flat,
+                                         inputs.options.cosmetic, result.stats);
+  compute_flat_phase_means(light, inputs.flat, result.stats.flat_phase_mean,
+                           &result.defects);
 
   for(std::size_t y = 0; y < light.height(); ++y) {
     for(std::size_t x = 0; x < light.width(); ++x) {
@@ -197,19 +382,34 @@ CalibrationResult calibrate_cfa(const CfaFrame &light, CalibrationInputs inputs)
 
       corrected.value = static_cast<float>(std::clamp(value, 0.0, 1.25));
       result.cfa.set_sample(x, y, corrected);
-      if(corrected.valid && !corrected.clipped) {
-        result.stats.mean_after += corrected.value;
-      }
     }
+  }
+
+  if(inputs.options.cosmetic.enabled) {
+    repair_sensor_defects(result.cfa, result.defects, inputs.options.cosmetic,
+                          result.stats);
   }
 
   const double usable = static_cast<double>(
       result.stats.samples - result.stats.invalid_samples - result.stats.clipped_samples);
   if(usable > 0.0) {
     result.stats.mean_before /= usable;
-    result.stats.mean_after /= usable;
     result.stats.mean_bias_subtracted /= usable;
     result.stats.mean_dark_subtracted /= usable;
+  }
+
+  std::size_t usable_after = 0;
+  for(std::size_t y = 0; y < result.cfa.height(); ++y) {
+    for(std::size_t x = 0; x < result.cfa.width(); ++x) {
+      const CfaSample sample = result.cfa.sample_info(x, y);
+      if(sample.valid && !sample.clipped) {
+        result.stats.mean_after += sample.value;
+        usable_after += 1;
+      }
+    }
+  }
+  if(usable_after > 0) {
+    result.stats.mean_after /= static_cast<double>(usable_after);
   }
 
   return result;

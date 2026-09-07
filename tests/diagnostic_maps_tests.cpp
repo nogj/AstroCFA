@@ -28,5 +28,14 @@ int main() {
   assert(residual.pixel(0, 0).r == 1.0F);
   assert(residual.pixel(0, 0).g == 0.0F);
 
+  astrocfa::DefectMap defects(8, 8);
+  defects.add(2, 2, astrocfa::SensorDefect::hot);
+  defects.add(3, 3, astrocfa::SensorDefect::dead);
+  defects.add(4, 4, astrocfa::SensorDefect::invalid_master);
+  const astrocfa::RgbImage defect_image = astrocfa::make_sensor_defect_map(defects);
+  assert(defect_image.pixel(2, 2).r == 1.0F);
+  assert(defect_image.pixel(3, 3).b == 1.0F);
+  assert(defect_image.pixel(4, 4).g == 1.0F);
+
   return 0;
 }

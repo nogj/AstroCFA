@@ -1,5 +1,6 @@
 #pragma once
 
+#include "astrocfa/calibration.hpp"
 #include "astrocfa/cfa.hpp"
 #include "astrocfa/frequency_cfa.hpp"
 
@@ -12,5 +13,6 @@ namespace astrocfa {
 [[nodiscard]] RgbImage make_remosaic_residual_map(const CfaFrame &measured,
                                                   const RgbImage &reconstructed,
                                                   double display_scale = 250.0);
+[[nodiscard]] RgbImage make_sensor_defect_map(const DefectMap &defects);
 
 } // namespace astrocfa
