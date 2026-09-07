@@ -146,8 +146,10 @@ double luminance(astrocfa::RgbPixel pixel) {
 
 void regularize_chroma(astrocfa::RgbImage &image,
                        const astrocfa::JointReconstructionOptions &options,
-                       const std::vector<astrocfa::RgbPixel> &data_support) {
-  if(options.chroma_smoothness <= 0.0 || image.width() < 3 || image.height() < 3) {
+                       const std::vector<astrocfa::RgbPixel> &data_support,
+                       bool preserve_direct_measurements) {
+  if((options.chroma_smoothness <= 0.0 && options.luma_smoothness <= 0.0) ||
+     image.width() < 3 || image.height() < 3) {
     return;
   }
   const int dx[4] = {-1, 1, 0, 0};
@@ -162,6 +164,7 @@ void regularize_chroma(astrocfa::RgbImage &image,
         const double center_luma = luminance(center);
         double red_chroma = 0.0;
         double blue_chroma = 0.0;
+        double green = 0.0;
         double weight_sum = 0.0;
         for(int i = 0; i < 4; ++i) {
           const astrocfa::RgbPixel neighbor = image.pixel(
@@ -171,27 +174,34 @@ void regularize_chroma(astrocfa::RgbImage &image,
               -options.edge_sensitivity * std::abs(luminance(neighbor) - center_luma));
           red_chroma += weight * (neighbor.r - neighbor.g);
           blue_chroma += weight * (neighbor.b - neighbor.g);
+          green += weight * neighbor.g;
           weight_sum += weight;
         }
         if(weight_sum <= 0.0) {
           continue;
         }
-        const double amount = std::clamp(options.chroma_smoothness, 0.0, 1.0);
+        const double chroma_amount = std::clamp(options.chroma_smoothness, 0.0, 1.0);
+        const double luma_amount = std::clamp(options.luma_smoothness, 0.0, 1.0);
         const double current_red = center.r - center.g;
         const double current_blue = center.b - center.g;
         const astrocfa::RgbPixel support = data_support[y * image.width() + x];
-        if(support.r <= 0.0F) {
+        const double regularized_green =
+            (!preserve_direct_measurements || support.g <= 0.0F)
+                ? (1.0 - luma_amount) * center.g + luma_amount * green / weight_sum
+                : center.g;
+        if(!preserve_direct_measurements || support.r <= 0.0F) {
           center.r = static_cast<float>(std::clamp(
-              static_cast<double>(center.g) +
-                  (1.0 - amount) * current_red + amount * red_chroma / weight_sum,
+              regularized_green + (1.0 - chroma_amount) * current_red +
+                  chroma_amount * red_chroma / weight_sum,
               0.0, 1.25));
         }
-        if(support.b <= 0.0F) {
+        if(!preserve_direct_measurements || support.b <= 0.0F) {
           center.b = static_cast<float>(std::clamp(
-              static_cast<double>(center.g) +
-                  (1.0 - amount) * current_blue + amount * blue_chroma / weight_sum,
+              regularized_green + (1.0 - chroma_amount) * current_blue +
+                  chroma_amount * blue_chroma / weight_sum,
               0.0, 1.25));
         }
+        center.g = static_cast<float>(std::clamp(regularized_green, 0.0, 1.25));
         image.set_pixel(x, y, center);
       }
     }
@@ -207,11 +217,15 @@ JointReconstructionResult reconstruct_joint_cfa(
   if(frames.empty() || frames.front().cfa == nullptr) {
     throw std::invalid_argument("Joint CFA reconstruction requires input frames");
   }
-  if(options.scale == 0 || options.iterations == 0) {
-    throw std::invalid_argument("Joint CFA scale and iterations must be positive");
+  if(options.scale == 0) {
+    throw std::invalid_argument("Joint CFA scale must be positive");
   }
   if(options.learning_rate <= 0.0 || options.learning_rate > 1.0 ||
-     options.huber_sigma <= 0.0) {
+     options.huber_sigma <= 0.0 || options.luma_smoothness < 0.0 ||
+     options.luma_smoothness > 1.0 || options.chroma_smoothness < 0.0 ||
+     options.chroma_smoothness > 1.0 || !std::isfinite(options.huber_sigma) ||
+     !std::isfinite(options.luma_smoothness) ||
+     !std::isfinite(options.chroma_smoothness)) {
     throw std::invalid_argument("Invalid joint reconstruction solver options");
   }
 
@@ -325,7 +339,7 @@ JointReconstructionResult reconstruct_joint_cfa(
         image.set_pixel(x, y, pixel);
       }
     }
-    regularize_chroma(image, options, denominator);
+    regularize_chroma(image, options, denominator, frames.size() == 1U);
   }
 
   accumulate_measurements(true);

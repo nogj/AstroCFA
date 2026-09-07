@@ -1,6 +1,7 @@
 #pragma once
 
 #include "astrocfa/cfa.hpp"
+#include "astrocfa/drizzle.hpp"
 
 #include <cstdint>
 #include <cstddef>
@@ -33,7 +34,28 @@ struct SyntheticAstroScene {
   std::vector<SyntheticStar> stars;
 };
 
+struct SyntheticObservationOptions {
+  SubpixelOffset offset;
+  double psf_sigma = 0.0;
+  double photometric_scale = 1.0;
+  double background_offset = 0.0;
+  bool add_noise = true;
+  double read_noise = 0.0025;
+  double shot_noise_scale = 0.0018;
+  std::size_t transient_samples = 0;
+  double transient_amplitude = 0.45;
+  std::uint32_t seed = 42;
+  BayerPattern pattern;
+};
+
+struct SyntheticCfaObservation {
+  CfaFrame cfa;
+  std::size_t transient_samples = 0;
+};
+
 [[nodiscard]] SyntheticAstroScene
 make_synthetic_astro_scene(SyntheticAstroSceneOptions options = {});
+[[nodiscard]] SyntheticCfaObservation make_synthetic_cfa_observation(
+    const RgbImage &truth, SyntheticObservationOptions options = {});
 
 } // namespace astrocfa

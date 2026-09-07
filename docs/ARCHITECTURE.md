@@ -250,10 +250,19 @@ auditable residual against every input measurement.
 
 Initialization combines phase-separated measurements on the common grid and
 uses the first frame's conservative reconstruction only to fill unconstrained
-locations. Chroma regularization is edge-aware and is forbidden from changing a
-channel wherever that output sample has direct CFA support. The solver exports
+locations. Chroma and green-luminance regularization are edge-aware. Direct CFA
+support is immutable in the single-frame case. With multiple noisy lights it is
+a weighted fidelity constraint rather than a hard lock, allowing the common
+latent estimate to denoise conflicting observations. The solver exports
 normalized R/G/B support as a confidence image and reports coverage, outlier
 count, normalized error, and initial/final CFA RMSE.
+
+The deterministic `benchmark-joint` harness compares demosaic-then-average,
+phase-aware initialization, least-squares joint inversion, and Huber-robust joint
+inversion against known RGB truth. It reports global RGB/chroma errors plus
+stellar aperture flux, FWHM, elongation, false color, and luminance errors. Its
+fixed-seeing default matches the implemented forward operator; variable seeing
+is retained as a declared model-mismatch stress test.
 
 This is an initial translation-only operator. It does not yet claim a complete
 physical image-formation model: per-frame PSF convolution, lens distortion,

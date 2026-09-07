@@ -22,7 +22,9 @@ inline void print_cli_help(std::ostream &out, std::string_view executable) {
       << "  " << executable
       << " benchmark-debayer [--width n] [--height n] [--seed n] [--noise none|astro] [--export-prefix path]\n"
       << "  " << executable
-      << " stack <input-raw-or-dng>... [--joint-reconstruct] [--cfa-drizzle] [--auto-register] [--scale 1|2] [--offset dx,dy]... [--iterations n] [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [-o output.tif|jpg] [--export-confidence map.tif|jpg]\n\n"
+      << " benchmark-joint [--width n] [--height n] [--frames n] [--iterations n] [--seed n] [--noise none|astro] [--seeing fixed|variable] [--transients n] [--luma-smoothness v] [--chroma-smoothness v] [--export-prefix path]\n"
+      << "  " << executable
+      << " stack <input-raw-or-dng>... [--joint-reconstruct] [--cfa-drizzle] [--auto-register] [--scale 1|2] [--offset dx,dy]... [--iterations n] [--luma-smoothness v] [--chroma-smoothness v] [--huber-sigma v] [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [-o output.tif|jpg] [--export-confidence map.tif|jpg]\n\n"
       << "Initial modes:\n"
       << "  faithful-astro   Conservative reconstruction from measured CFA samples\n"
       << "  star-preserve    Preserve stellar PSF shape and color discipline\n"
@@ -37,7 +39,8 @@ inline void print_command_stub(std::ostream &out, std::string_view command) {
 
 inline bool is_known_command(std::string_view command) {
   return command == "inspect" || command == "develop" || command == "calibrate" ||
-         command == "stack" || command == "benchmark-debayer";
+         command == "stack" || command == "benchmark-debayer" ||
+         command == "benchmark-joint";
 }
 
 } // namespace astrocfa

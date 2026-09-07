@@ -14,9 +14,13 @@ struct ReconstructionMetrics {
   double chroma_mae = 0.0;
   double star_false_color = 0.0;
   double star_luma_rmse = 0.0;
+  double star_flux_relative_error = 0.0;
+  double star_fwhm_relative_error = 0.0;
+  double star_elongation_error = 0.0;
   double cfa_residual_mae = 0.0;
   std::size_t samples = 0;
   std::size_t star_samples = 0;
+  std::size_t measured_stars = 0;
 };
 
 [[nodiscard]] ReconstructionMetrics

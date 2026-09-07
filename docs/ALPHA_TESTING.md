@@ -12,6 +12,10 @@ astrocfa-nogui benchmark-debayer
 
 astrocfa-nogui benchmark-debayer --export-prefix benchmark/scene
 
+astrocfa-nogui benchmark-joint --export-prefix benchmark/joint
+
+astrocfa-nogui benchmark-joint --seeing variable --transients 4
+
 astrocfa-nogui inspect light.dng --linear-cfa --frequency-cfa
 
 astrocfa-nogui develop light.dng \
@@ -39,6 +43,7 @@ Good reports include:
 
 - operating system and build source;
 - `benchmark-debayer` output when possible;
+- `benchmark-joint` output for dithered-data or joint-solver reports;
 - camera model and RAW format;
 - exact command or GUI steps;
 - console output with residual/chroma metrics;

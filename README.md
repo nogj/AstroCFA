@@ -76,6 +76,8 @@ astrocfa-nogui inspect input.dng
 astrocfa-nogui inspect input.dng --linear-cfa --star-candidates --noise-model --frequency-cfa
 astrocfa-nogui benchmark-debayer
 astrocfa-nogui benchmark-debayer --width 192 --height 128 --seed 7 --export-prefix bench/astro
+astrocfa-nogui benchmark-joint --frames 4 --noise astro --seeing fixed
+astrocfa-nogui benchmark-joint --seeing variable --transients 4 --export-prefix bench/joint
 astrocfa-nogui calibrate light.dng --dark master-dark.dng --flat master-flat.dng \
   --method inverse-refine -o calibrated-preview.jpg --preview-stretch astro
 astrocfa-nogui calibrate light.dng --dark-dir darks/ --flat-dir flats/ \
@@ -113,8 +115,18 @@ or risky.
 `benchmark-debayer` generates a deterministic synthetic astro scene with known
 RGB truth, mosaics it into CFA data, and compares every non-neural demosaic
 candidate. It reports RGB error, chroma error, false star color, star luminance
-error, and remosaicing residual. This is the early guardrail for keeping
+error, aperture-flux error, FWHM error, elongation error, and remosaicing
+residual. This is the early guardrail for keeping
 AstroCFA's reconstruction work measurable rather than merely aesthetic.
+
+`benchmark-joint` compares demosaic-each-light-then-average with phase-aware CFA
+initialization, non-robust joint inversion, and robust joint inversion. It
+synthesizes known dithers, Poisson-Gaussian noise, optional per-frame seeing
+changes, and transient samples. Fixed seeing is the default because it matches
+the current translation-and-sampling forward model; `--seeing variable` is a
+declared stress test until per-frame PSF convolution is part of that operator.
+The tuned priors remain exposed as `--luma-smoothness` and
+`--chroma-smoothness` for reproducible ablations.
 
 The inverse refinement path includes an optional star chroma guard for compact
 PSF-like highlights. It is designed to reduce false magenta/green star cores
@@ -130,8 +142,10 @@ reconstruction. The map remains available as a Qt overlay and through
 `stack --joint-reconstruct` solves one RGB scene directly from all calibrated
 CFA measurements and their supplied offsets. A phase-separated splat initializes
 the scene, then robust noise-weighted backprojection reduces the residual against
-every original light. Edge-aware chroma regularization is restricted to channels
-without direct CFA support. The current solver models translation and bilinear
+every original light. Edge-aware chroma and green-luminance regularization keep
+single-frame direct samples exact; with multiple noisy lights, measurements are
+weighted fidelity constraints so the common estimate can denoise. The current
+solver models translation and bilinear
 sampling; PSF convolution, distortion, tiled memory use, and subpixel star
 registration remain future work. Scale 1 is the memory-conscious default for
 joint reconstruction; scale 2 is available explicitly for dithered datasets.

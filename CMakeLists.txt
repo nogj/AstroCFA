@@ -53,6 +53,7 @@ add_library(astrocfa_core
   src/image_writer.cpp
   src/joint_reconstruction.cpp
   src/luminance_proxy.cpp
+  src/multiframe_benchmark.cpp
   src/noise_model.cpp
   src/output_transform.cpp
   src/raw_inspector.cpp

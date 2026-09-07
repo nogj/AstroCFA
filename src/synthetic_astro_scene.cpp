@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -37,6 +39,68 @@ int channel_for_phase(astrocfa::CfaColor color) {
   return 1;
 }
 
+astrocfa::RgbPixel sample_truth(const astrocfa::RgbImage &truth, double x, double y) {
+  if(x < 0.0 || y < 0.0 || x > static_cast<double>(truth.width() - 1U) ||
+     y > static_cast<double>(truth.height() - 1U)) {
+    return {};
+  }
+  const std::size_t x0 = static_cast<std::size_t>(std::floor(x));
+  const std::size_t y0 = static_cast<std::size_t>(std::floor(y));
+  const std::size_t x1 = std::min(x0 + 1U, truth.width() - 1U);
+  const std::size_t y1 = std::min(y0 + 1U, truth.height() - 1U);
+  const double fx = x - static_cast<double>(x0);
+  const double fy = y - static_cast<double>(y0);
+  const astrocfa::RgbPixel samples[4] = {
+      truth.pixel(x0, y0), truth.pixel(x1, y0),
+      truth.pixel(x0, y1), truth.pixel(x1, y1),
+  };
+  const double weights[4] = {
+      (1.0 - fx) * (1.0 - fy), fx * (1.0 - fy),
+      (1.0 - fx) * fy, fx * fy,
+  };
+  astrocfa::RgbPixel result;
+  for(int i = 0; i < 4; ++i) {
+    result.r += static_cast<float>(weights[i] * samples[i].r);
+    result.g += static_cast<float>(weights[i] * samples[i].g);
+    result.b += static_cast<float>(weights[i] * samples[i].b);
+  }
+  return result;
+}
+
+astrocfa::RgbPixel sample_blurred_truth(const astrocfa::RgbImage &truth, double x,
+                                       double y, double sigma) {
+  if(sigma <= 0.0) {
+    return sample_truth(truth, x, y);
+  }
+  const int radius = std::max(1, static_cast<int>(std::ceil(3.0 * sigma)));
+  astrocfa::RgbPixel result;
+  double weight_sum = 0.0;
+  for(int dy = -radius; dy <= radius; ++dy) {
+    for(int dx = -radius; dx <= radius; ++dx) {
+      const double sample_x = x + static_cast<double>(dx);
+      const double sample_y = y + static_cast<double>(dy);
+      if(sample_x < 0.0 || sample_y < 0.0 ||
+         sample_x > static_cast<double>(truth.width() - 1U) ||
+         sample_y > static_cast<double>(truth.height() - 1U)) {
+        continue;
+      }
+      const double distance = static_cast<double>(dx * dx + dy * dy);
+      const double weight = std::exp(-0.5 * distance / (sigma * sigma));
+      const astrocfa::RgbPixel sample = sample_truth(truth, sample_x, sample_y);
+      result.r += static_cast<float>(weight * sample.r);
+      result.g += static_cast<float>(weight * sample.g);
+      result.b += static_cast<float>(weight * sample.b);
+      weight_sum += weight;
+    }
+  }
+  if(weight_sum > 0.0) {
+    result.r = static_cast<float>(result.r / weight_sum);
+    result.g = static_cast<float>(result.g / weight_sum);
+    result.b = static_cast<float>(result.b / weight_sum);
+  }
+  return result;
+}
+
 std::vector<astrocfa::SyntheticStar> make_stars(std::size_t width, std::size_t height) {
   return {
       {.x = width * 0.18, .y = height * 0.22, .flux = 0.72, .sigma = 0.48,
@@ -55,6 +119,63 @@ std::vector<astrocfa::SyntheticStar> make_stars(std::size_t width, std::size_t h
 } // namespace
 
 namespace astrocfa {
+
+SyntheticCfaObservation make_synthetic_cfa_observation(
+    const RgbImage &truth, SyntheticObservationOptions options) {
+  if(truth.width() < 3 || truth.height() < 3) {
+    throw std::invalid_argument("Synthetic observation requires at least a 3x3 truth image");
+  }
+  CfaFrame cfa(truth.width(), truth.height(), options.pattern);
+  std::mt19937 rng(options.seed);
+  std::normal_distribution<double> gaussian(0.0, 1.0);
+  for(std::size_t y = 0; y < cfa.height(); ++y) {
+    for(std::size_t x = 0; x < cfa.width(); ++x) {
+      const double scene_x = static_cast<double>(x) + options.offset.dx;
+      const double scene_y = static_cast<double>(y) + options.offset.dy;
+      if(scene_x < 0.0 || scene_y < 0.0 ||
+         scene_x > static_cast<double>(truth.width() - 1U) ||
+         scene_y > static_cast<double>(truth.height() - 1U)) {
+        cfa.set_sample(x, y, CfaSample{.valid = false});
+        continue;
+      }
+      const RgbPixel scene =
+          sample_blurred_truth(truth, scene_x, scene_y, options.psf_sigma);
+      const int channel = channel_for_phase(options.pattern.at(x, y));
+      double value = options.photometric_scale * channel_value(scene, channel) +
+                     options.background_offset;
+      if(options.add_noise) {
+        const double sigma = std::sqrt(options.read_noise * options.read_noise +
+                                       std::max(0.0, value) * options.shot_noise_scale);
+        value += gaussian(rng) * sigma;
+      }
+      cfa.set_sample(x, y, CfaSample{
+                               .value = clamp_scene(value),
+                               .valid = true,
+                               .clipped = value >= 1.0,
+                           });
+    }
+  }
+
+  std::uniform_int_distribution<std::size_t> x_pick(1, truth.width() - 2U);
+  std::uniform_int_distribution<std::size_t> y_pick(1, truth.height() - 2U);
+  std::size_t inserted = 0;
+  for(std::size_t i = 0; i < options.transient_samples; ++i) {
+    const std::size_t x = x_pick(rng);
+    const std::size_t y = y_pick(rng);
+    CfaSample sample = cfa.sample_info(x, y);
+    if(!sample.valid) {
+      continue;
+    }
+    sample.value = static_cast<float>(
+        std::clamp(static_cast<double>(sample.value) + options.transient_amplitude,
+                   0.0, 0.98));
+    sample.clipped = false;
+    cfa.set_sample(x, y, sample);
+    inserted += 1;
+  }
+  return SyntheticCfaObservation{.cfa = std::move(cfa),
+                                 .transient_samples = inserted};
+}
 
 SyntheticAstroScene make_synthetic_astro_scene(SyntheticAstroSceneOptions options) {
   RgbImage truth(options.width, options.height);

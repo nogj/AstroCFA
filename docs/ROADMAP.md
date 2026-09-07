@@ -41,6 +41,10 @@
 - CFA-aware drizzle accumulation.
 - Robust joint CFA reconstruction from translated lights, with per-channel
   confidence and transient rejection. Initial translation-only solver implemented.
+- Deterministic multi-frame ablation benchmark with known dithers, sensor noise,
+  transients, photometry, FWHM, elongation, and RGB/chroma truth metrics. Implemented.
+- Add per-frame PSF convolution to the joint forward/adjoint operator and validate
+  it against the variable-seeing benchmark.
 
 ## Milestone 5: Baseline Reconstruction
 

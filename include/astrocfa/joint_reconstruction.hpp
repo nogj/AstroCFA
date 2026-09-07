@@ -21,7 +21,8 @@ struct JointReconstructionOptions {
   std::size_t iterations = 6;
   double learning_rate = 0.85;
   double huber_sigma = 4.0;
-  double chroma_smoothness = 0.08;
+  double luma_smoothness = 0.2;
+  double chroma_smoothness = 0.9;
   double edge_sensitivity = 24.0;
   NoiseModel noise;
 };

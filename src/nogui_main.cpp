@@ -6,6 +6,7 @@
 #include "astrocfa/frequency_cfa.hpp"
 #include "astrocfa/image_writer.hpp"
 #include "astrocfa/joint_reconstruction.hpp"
+#include "astrocfa/multiframe_benchmark.hpp"
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/output_transform.hpp"
 #include "astrocfa/raw_loader.hpp"
@@ -266,7 +267,28 @@ void write_benchmark_row(const std::string &method,
       << " chroma_mae=" << metrics.chroma_mae
       << " star_false_color=" << metrics.star_false_color
       << " star_luma_rmse=" << metrics.star_luma_rmse
+      << " star_flux_rel=" << metrics.star_flux_relative_error
+      << " star_fwhm_rel=" << metrics.star_fwhm_relative_error
+      << " star_elongation=" << metrics.star_elongation_error
       << " cfa_mae=" << metrics.cfa_residual_mae << "\n";
+}
+
+void write_multiframe_benchmark_row(
+    const astrocfa::MultiframeBenchmarkMethod &method, std::ostream &out) {
+  out << "  " << std::left << std::setw(28) << method.name << std::right
+      << " rgb_rmse=" << std::fixed << std::setprecision(6)
+      << method.metrics.rgb_rmse << " chroma_mae=" << method.metrics.chroma_mae
+      << " star_false_color=" << method.metrics.star_false_color
+      << " star_luma_rmse=" << method.metrics.star_luma_rmse
+      << " star_flux_rel=" << method.metrics.star_flux_relative_error
+      << " star_fwhm_rel=" << method.metrics.star_fwhm_relative_error
+      << " star_elongation=" << method.metrics.star_elongation_error
+      << " first_cfa_mae=" << method.metrics.cfa_residual_mae;
+  if(method.has_solver_stats) {
+    out << " solver_rmse=" << method.solver_stats.final_rmse
+        << " outliers=" << method.solver_stats.robust_outliers;
+  }
+  out << "\n";
 }
 
 } // namespace
@@ -732,6 +754,93 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  if(arg1 == "benchmark-joint") {
+    astrocfa::MultiframeBenchmarkOptions options;
+    std::string export_prefix;
+    try {
+      for(int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if(arg == "--width" && i + 1 < argc) {
+          options.width = static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--height" && i + 1 < argc) {
+          options.height = static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--frames" && i + 1 < argc) {
+          options.frames = static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--iterations" && i + 1 < argc) {
+          options.iterations = static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--seed" && i + 1 < argc) {
+          options.seed = static_cast<std::uint32_t>(std::stoul(argv[++i]));
+        } else if(arg == "--transients" && i + 1 < argc) {
+          options.transients_per_frame =
+              static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--chroma-smoothness" && i + 1 < argc) {
+          options.chroma_smoothness = std::stod(argv[++i]);
+        } else if(arg == "--luma-smoothness" && i + 1 < argc) {
+          options.luma_smoothness = std::stod(argv[++i]);
+        } else if(arg == "--noise" && i + 1 < argc) {
+          const std::string value = argv[++i];
+          if(value == "none") {
+            options.add_noise = false;
+          } else if(value == "astro") {
+            options.add_noise = true;
+          } else {
+            throw std::invalid_argument("Unsupported benchmark noise mode: " + value);
+          }
+        } else if(arg == "--seeing" && i + 1 < argc) {
+          const std::string value = argv[++i];
+          if(value == "fixed") {
+            options.vary_seeing = false;
+          } else if(value == "variable") {
+            options.vary_seeing = true;
+          } else {
+            throw std::invalid_argument("Unsupported seeing mode: " + value);
+          }
+        } else if(arg == "--export-prefix" && i + 1 < argc) {
+          export_prefix = argv[++i];
+        } else {
+          throw std::invalid_argument("Unknown benchmark-joint option: " + arg);
+        }
+      }
+
+      const astrocfa::MultiframeBenchmarkResult benchmark =
+          astrocfa::run_multiframe_benchmark(options);
+      std::cout << "AstroCFA joint CFA reconstruction benchmark\n"
+                << "  dimensions: " << options.width << " x " << options.height << "\n"
+                << "  frames: " << options.frames << "\n"
+                << "  iterations: " << options.iterations << "\n"
+                << "  seed: " << options.seed << "\n"
+                << "  noise: " << (options.add_noise ? "astro" : "none") << "\n"
+                << "  seeing: " << (options.vary_seeing ? "variable" : "fixed") << "\n"
+                << "  luma smoothness: " << options.luma_smoothness << "\n"
+                << "  chroma smoothness: " << options.chroma_smoothness << "\n"
+                << "  injected transients: " << benchmark.injected_transients << "\n"
+                << "  note: lower errors are better; solver RMSE measures all CFA lights.\n";
+      for(const auto &method : benchmark.methods) {
+        write_multiframe_benchmark_row(method, std::cout);
+      }
+
+      if(!export_prefix.empty()) {
+        astrocfa::write_rgb_image(
+            benchmark.truth, join_output_path(export_prefix, "-truth.tif"));
+        for(const auto &method : benchmark.methods) {
+          astrocfa::write_rgb_image(
+              astrocfa::make_astro_preview(method.image),
+              join_output_path(export_prefix, "-" + method.name + ".jpg"));
+          if(method.confidence) {
+            astrocfa::write_rgb_image(
+                *method.confidence,
+                join_output_path(export_prefix, "-" + method.name + "-confidence.tif"));
+          }
+        }
+        std::cout << "  export prefix: " << export_prefix << "\n";
+      }
+    } catch(const std::exception &error) {
+      std::cerr << "benchmark-joint failed: " << error.what() << "\n";
+      return 1;
+    }
+    return 0;
+  }
+
   if(arg1 == "stack") {
     std::vector<std::string> inputs;
     std::vector<astrocfa::SubpixelOffset> offsets;
@@ -741,6 +850,9 @@ int main(int argc, char **argv) {
     std::size_t scale = 2;
     bool scale_explicit = false;
     std::size_t iterations = 6;
+    double luma_smoothness = 0.2;
+    double chroma_smoothness = 0.9;
+    double huber_sigma = 4.0;
     std::string output_path;
     std::string confidence_path;
     CalibrationCliOptions calibration_options;
@@ -758,6 +870,12 @@ int main(int argc, char **argv) {
         scale_explicit = true;
       } else if(arg == "--iterations" && i + 1 < argc) {
         iterations = static_cast<std::size_t>(std::stoul(argv[++i]));
+      } else if(arg == "--luma-smoothness" && i + 1 < argc) {
+        luma_smoothness = std::stod(argv[++i]);
+      } else if(arg == "--chroma-smoothness" && i + 1 < argc) {
+        chroma_smoothness = std::stod(argv[++i]);
+      } else if(arg == "--huber-sigma" && i + 1 < argc) {
+        huber_sigma = std::stod(argv[++i]);
       } else if(arg == "--offset" && i + 1 < argc) {
         offsets.push_back(parse_offset(argv[++i]));
       } else if((arg == "-o" || arg == "--output") && i + 1 < argc) {
@@ -910,10 +1028,15 @@ int main(int argc, char **argv) {
                 joint_frames, astrocfa::JointReconstructionOptions{
                                   .scale = scale,
                                   .iterations = iterations,
+                                  .huber_sigma = huber_sigma,
+                                  .luma_smoothness = luma_smoothness,
+                                  .chroma_smoothness = chroma_smoothness,
                               });
         std::cout << "  joint output dimensions: " << result.image.width() << " x "
                   << result.image.height() << "\n"
                   << "  joint iterations: " << result.stats.iterations << "\n"
+                  << "  joint luma/chroma smoothness: " << luma_smoothness << " / "
+                  << chroma_smoothness << "\n"
                   << "  measurements: " << result.stats.measurements << "\n"
                   << "  initial/final CFA RMSE: " << std::fixed
                   << std::setprecision(8) << result.stats.initial_rmse << " / "
