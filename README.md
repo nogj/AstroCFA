@@ -70,6 +70,8 @@ and reproducible long-running workflows.
 ```bash
 astrocfa-nogui inspect input.dng
 astrocfa-nogui inspect input.dng --linear-cfa --star-candidates --noise-model --frequency-cfa
+astrocfa-nogui benchmark-debayer
+astrocfa-nogui benchmark-debayer --width 192 --height 128 --seed 7 --export-prefix bench/astro
 astrocfa-nogui calibrate light.dng --dark master-dark.dng --flat master-flat.dng \
   --method inverse-refine -o calibrated-preview.jpg --preview-stretch astro
 astrocfa-nogui calibrate light.dng --dark-dir darks/ --flat-dir flats/ \
@@ -99,6 +101,12 @@ Diagnostic maps can be exported alongside the image. The first maps are Bayer
 alias-risk and remosaicing residual. These are intentionally part of the core
 workflow: AstroCFA should show which parts of the result are measured, inferred,
 or risky.
+
+`benchmark-debayer` generates a deterministic synthetic astro scene with known
+RGB truth, mosaics it into CFA data, and compares every non-neural demosaic
+candidate. It reports RGB error, chroma error, false star color, star luminance
+error, and remosaicing residual. This is the early guardrail for keeping
+AstroCFA's reconstruction work measurable rather than merely aesthetic.
 
 ## Status
 

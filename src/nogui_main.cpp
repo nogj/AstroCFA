@@ -9,8 +9,10 @@
 #include "astrocfa/output_transform.hpp"
 #include "astrocfa/raw_loader.hpp"
 #include "astrocfa/raw_inspector.hpp"
+#include "astrocfa/reconstruction_metrics.hpp"
 #include "astrocfa/registration.hpp"
 #include "astrocfa/star_detector.hpp"
+#include "astrocfa/synthetic_astro_scene.hpp"
 #include "astrocfa/version.hpp"
 
 #include <iomanip>
@@ -231,6 +233,34 @@ void validate_calibration_cli_options(const CalibrationCliOptions &options) {
   if(!options.flat_path.empty() && !options.flat_dir.empty()) {
     throw std::invalid_argument("Use either --flat or --flat-dir, not both");
   }
+}
+
+astrocfa::RgbImage cfa_to_grayscale_rgb(const astrocfa::CfaFrame &cfa) {
+  astrocfa::RgbImage image(cfa.width(), cfa.height());
+  for(std::size_t y = 0; y < cfa.height(); ++y) {
+    for(std::size_t x = 0; x < cfa.width(); ++x) {
+      const astrocfa::CfaSample sample = cfa.sample_info(x, y);
+      const float value = sample.valid ? sample.value : 0.0F;
+      image.set_pixel(x, y, astrocfa::RgbPixel{.r = value, .g = value, .b = value});
+    }
+  }
+  return image;
+}
+
+std::string join_output_path(const std::string &prefix, const std::string &suffix) {
+  return prefix + suffix;
+}
+
+void write_benchmark_row(const std::string &method,
+                         const astrocfa::ReconstructionMetrics &metrics,
+                         std::ostream &out) {
+  out << "  " << std::left << std::setw(24) << method << std::right
+      << " rgb_mae=" << std::fixed << std::setprecision(6) << metrics.rgb_mae
+      << " rgb_rmse=" << metrics.rgb_rmse
+      << " chroma_mae=" << metrics.chroma_mae
+      << " star_false_color=" << metrics.star_false_color
+      << " star_luma_rmse=" << metrics.star_luma_rmse
+      << " cfa_mae=" << metrics.cfa_residual_mae << "\n";
 }
 
 } // namespace
@@ -571,6 +601,90 @@ int main(int argc, char **argv) {
       }
     } catch(const std::exception &error) {
       std::cerr << "calibrate failed: " << error.what() << "\n";
+      return 1;
+    }
+    return 0;
+  }
+
+  if(arg1 == "benchmark-debayer") {
+    astrocfa::SyntheticAstroSceneOptions scene_options;
+    std::string export_prefix;
+
+    try {
+      for(int i = 2; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if(arg == "--width" && i + 1 < argc) {
+          scene_options.width = static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--height" && i + 1 < argc) {
+          scene_options.height = static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--seed" && i + 1 < argc) {
+          scene_options.seed = static_cast<std::uint32_t>(std::stoul(argv[++i]));
+        } else if(arg == "--noise" && i + 1 < argc) {
+          const std::string noise = argv[++i];
+          if(noise == "none") {
+            scene_options.add_noise = false;
+            scene_options.add_hot_pixels = false;
+          } else if(noise == "astro") {
+            scene_options.add_noise = true;
+            scene_options.add_hot_pixels = true;
+          } else {
+            throw std::invalid_argument("Unsupported benchmark noise mode: " + noise);
+          }
+        } else if(arg == "--export-prefix" && i + 1 < argc) {
+          export_prefix = argv[++i];
+        } else {
+          throw std::invalid_argument("Unknown benchmark-debayer option: " + arg);
+        }
+      }
+
+      if(scene_options.width < 16 || scene_options.height < 16) {
+        throw std::invalid_argument("Benchmark scene must be at least 16x16");
+      }
+
+      const astrocfa::SyntheticAstroScene scene =
+          astrocfa::make_synthetic_astro_scene(scene_options);
+      const std::vector<std::string> methods = {
+          "bilinear-baseline",
+          "malvar-baseline",
+          "residual-interpolation",
+          "frequency-guided",
+          "inverse-refine",
+      };
+
+      std::cout << "AstroCFA synthetic astro debayer benchmark\n"
+                << "  dimensions: " << scene_options.width << " x "
+                << scene_options.height << "\n"
+                << "  seed: " << scene_options.seed << "\n"
+                << "  noise: " << (scene_options.add_noise ? "astro" : "none")
+                << "\n"
+                << "  stars: " << scene.stars.size() << "\n"
+                << "  note: lower metrics are better; cfa_mae audits measured-sample fidelity.\n";
+
+      if(!export_prefix.empty()) {
+        astrocfa::write_rgb_image(scene.truth, join_output_path(export_prefix, "-truth.tif"));
+        astrocfa::write_rgb_image(cfa_to_grayscale_rgb(scene.cfa),
+                                  join_output_path(export_prefix, "-cfa.tif"));
+      }
+
+      for(const std::string &method : methods) {
+        astrocfa::InverseRefinementOptions inverse_options;
+        inverse_options.frequency.tile_size = 16;
+        inverse_options.iterations = 3;
+        const astrocfa::DemosaicResult result =
+            reconstruct_with_method(scene.cfa, method, inverse_options);
+        const astrocfa::ReconstructionMetrics metrics =
+            astrocfa::measure_reconstruction(scene.truth, result.image, scene.cfa,
+                                             scene.stars);
+        write_benchmark_row(method, metrics, std::cout);
+
+        if(!export_prefix.empty()) {
+          astrocfa::write_rgb_image(
+              astrocfa::make_astro_preview(result.image),
+              join_output_path(export_prefix, "-" + method + ".jpg"));
+        }
+      }
+    } catch(const std::exception &error) {
+      std::cerr << "benchmark-debayer failed: " << error.what() << "\n";
       return 1;
     }
     return 0;

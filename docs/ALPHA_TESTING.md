@@ -6,6 +6,10 @@ calibration, non-neural demosaicing, TIFF/JPEG export, and diagnostic maps.
 Useful smoke tests:
 
 ```bash
+astrocfa-nogui benchmark-debayer
+
+astrocfa-nogui benchmark-debayer --export-prefix benchmark/scene
+
 astrocfa-nogui inspect light.dng --linear-cfa --frequency-cfa
 
 astrocfa-nogui develop light.dng \
@@ -26,6 +30,7 @@ astrocfa-nogui develop light.dng \
 Good reports include:
 
 - operating system and build source;
+- `benchmark-debayer` output when possible;
 - camera model and RAW format;
 - exact command or GUI steps;
 - console output with residual/chroma metrics;
