@@ -1,3 +1,4 @@
+#include "astrocfa/calibration.hpp"
 #include "astrocfa/diagnostic_maps.hpp"
 #include "astrocfa/demosaic.hpp"
 #include "astrocfa/frequency_cfa.hpp"
@@ -25,7 +26,9 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStatusBar>
+#include <QStyle>
 #include <QString>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -33,10 +36,12 @@
 #include <cctype>
 #include <cmath>
 #include <exception>
+#include <filesystem>
 #include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -92,6 +97,107 @@ astrocfa::RgbImage gui_output_image(const astrocfa::RgbImage &linear,
   return linear;
 }
 
+bool is_raw_like_path(const std::filesystem::path &path) {
+  std::string extension = path.extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+  return extension == ".dng" || extension == ".cr2" || extension == ".cr3" ||
+         extension == ".nef" || extension == ".arw" || extension == ".raf" ||
+         extension == ".orf" || extension == ".rw2" || extension == ".pef" ||
+         extension == ".srw";
+}
+
+struct LoadedMaster {
+  std::unique_ptr<astrocfa::LinearRawFrame> file;
+  std::unique_ptr<astrocfa::MasterBuildResult> directory;
+
+  [[nodiscard]] const astrocfa::CfaFrame *cfa() const {
+    return directory ? &directory->cfa : file ? &file->cfa : nullptr;
+  }
+};
+
+LoadedMaster load_master(const QString &selection) {
+  LoadedMaster loaded;
+  if(selection.isEmpty()) {
+    return loaded;
+  }
+
+  const std::filesystem::path path(selection.toStdString());
+  if(!std::filesystem::is_directory(path)) {
+    loaded.file = std::make_unique<astrocfa::LinearRawFrame>(
+        astrocfa::load_linear_cfa_file(path.string()));
+    return loaded;
+  }
+
+  std::vector<std::filesystem::path> paths;
+  for(const auto &entry : std::filesystem::directory_iterator(path)) {
+    if(entry.is_regular_file() && is_raw_like_path(entry.path())) {
+      paths.push_back(entry.path());
+    }
+  }
+  std::sort(paths.begin(), paths.end());
+  if(paths.empty()) {
+    throw std::invalid_argument("No RAW/DNG files found in master directory: " +
+                                path.string());
+  }
+
+  std::vector<astrocfa::CfaFrame> frames;
+  frames.reserve(paths.size());
+  for(const auto &frame_path : paths) {
+    frames.push_back(astrocfa::load_linear_cfa_file(frame_path.string()).cfa);
+  }
+  loaded.directory = std::make_unique<astrocfa::MasterBuildResult>(
+      astrocfa::build_master_cfa(frames));
+  return loaded;
+}
+
+void write_master_report(const char *name, const LoadedMaster &master,
+                         std::ostream &out) {
+  if(master.directory) {
+    const auto &stats = master.directory->stats;
+    out << "  " << name << " master: " << stats.frames << " frames, mean "
+        << std::fixed << std::setprecision(8) << stats.mean << ", "
+        << stats.rejected_samples << " rejected samples\n";
+  } else if(master.file) {
+    out << "  " << name << " master: file\n";
+  }
+}
+
+struct ReconstructionPreset {
+  std::string name;
+  astrocfa::DemosaicResult result;
+};
+
+ReconstructionPreset reconstruct_for_preset(const QString &preset,
+                                             const astrocfa::CfaFrame &cfa) {
+  const astrocfa::NoiseModel noise;
+  if(preset == "faithful-astro") {
+    return {"inverse-refine", astrocfa::reconstruct_inverse_refine(cfa, noise)};
+  }
+  if(preset == "star-preserve") {
+    astrocfa::InverseRefinementOptions options;
+    options.star_chroma_guard = 0.60;
+    options.alias_suppression = 0.55;
+    return {"inverse-refine (star-preserve)",
+            astrocfa::reconstruct_inverse_refine(cfa, noise, options)};
+  }
+  if(preset == "forensic" || preset == "frequency-guided") {
+    return {preset == "forensic" ? "frequency-guided (forensic)" : "frequency-guided",
+            astrocfa::reconstruct_frequency_guided(cfa, noise)};
+  }
+  if(preset == "inverse-refine") {
+    return {"inverse-refine", astrocfa::reconstruct_inverse_refine(cfa, noise)};
+  }
+  if(preset == "malvar-baseline") {
+    return {"malvar-baseline", astrocfa::reconstruct_malvar_baseline(cfa, noise)};
+  }
+  if(preset == "residual-interpolation") {
+    return {"residual-interpolation",
+            astrocfa::reconstruct_residual_interpolation(cfa, noise)};
+  }
+  return {"bilinear-baseline", astrocfa::reconstruct_baseline(cfa, noise)};
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -101,7 +207,7 @@ int main(int argc, char **argv) {
 
   QMainWindow window;
   window.setWindowTitle("AstroCFA");
-  window.resize(920, 620);
+  window.resize(1040, 900);
 
   auto *central = new QWidget;
   auto *root = new QVBoxLayout(central);
@@ -136,6 +242,49 @@ int main(int argc, char **argv) {
   input_layout->addWidget(output_path, 1, 1);
   input_layout->addWidget(browse_output, 1, 2);
 
+  auto *calibration_group = new QGroupBox("Calibration masters");
+  auto *calibration_layout = new QGridLayout(calibration_group);
+  auto *bias_path = new QLineEdit;
+  auto *dark_path = new QLineEdit;
+  auto *flat_path = new QLineEdit;
+  auto *dark_includes_bias = new QCheckBox("Dark includes bias");
+  dark_includes_bias->setChecked(true);
+  dark_includes_bias->setToolTip(
+      "Disable only when the master dark was built after bias subtraction");
+  const auto add_master_row = [&](int row, const QString &label, QLineEdit *path) {
+    path->setPlaceholderText("Optional master file or RAW directory");
+    path->setClearButtonEnabled(true);
+    auto *choose_file = new QToolButton;
+    choose_file->setIcon(window.style()->standardIcon(QStyle::SP_FileIcon));
+    choose_file->setToolTip("Choose " + label.toLower() + " master file");
+    auto *choose_dir = new QToolButton;
+    choose_dir->setIcon(window.style()->standardIcon(QStyle::SP_DirOpenIcon));
+    choose_dir->setToolTip("Build " + label.toLower() + " master from a directory");
+    calibration_layout->addWidget(new QLabel(label), row, 0);
+    calibration_layout->addWidget(path, row, 1);
+    calibration_layout->addWidget(choose_file, row, 2);
+    calibration_layout->addWidget(choose_dir, row, 3);
+    QObject::connect(choose_file, &QToolButton::clicked, [&, path, label]() {
+      const QString file = QFileDialog::getOpenFileName(
+          &window, "Choose " + label.toLower() + " master", QString(),
+          "RAW masters (*.dng *.cr2 *.cr3 *.nef *.arw *.raf *.orf *.rw2 *.pef *.srw);;All files (*)");
+      if(!file.isEmpty()) {
+        path->setText(file);
+      }
+    });
+    QObject::connect(choose_dir, &QToolButton::clicked, [&, path, label]() {
+      const QString directory = QFileDialog::getExistingDirectory(
+          &window, "Choose " + label.toLower() + " frames directory");
+      if(!directory.isEmpty()) {
+        path->setText(directory);
+      }
+    });
+  };
+  add_master_row(0, "Bias", bias_path);
+  add_master_row(1, "Dark", dark_path);
+  add_master_row(2, "Flat", flat_path);
+  calibration_layout->addWidget(dark_includes_bias, 3, 1, 1, 3);
+
   auto *mode_group = new QGroupBox("Mode");
   auto *mode_layout = new QGridLayout(mode_group);
   auto *mode = new QComboBox;
@@ -156,10 +305,10 @@ int main(int argc, char **argv) {
   mode->addItem("residual-interpolation");
   mode_layout->addWidget(new QLabel("Reconstruction"), 0, 0);
   mode_layout->addWidget(mode, 0, 1);
-  mode_layout->addWidget(linear_cfa, 1, 1);
-  mode_layout->addWidget(star_candidates, 2, 1);
-  mode_layout->addWidget(noise_model, 3, 1);
-  mode_layout->addWidget(frequency_cfa, 4, 1);
+  mode_layout->addWidget(linear_cfa, 0, 2);
+  mode_layout->addWidget(star_candidates, 0, 3);
+  mode_layout->addWidget(noise_model, 0, 4);
+  mode_layout->addWidget(frequency_cfa, 0, 5);
 
   auto *actions = new QWidget;
   auto *actions_layout = new QHBoxLayout(actions);
@@ -197,7 +346,7 @@ int main(int argc, char **argv) {
 
   auto *image_label = new QLabel;
   image_label->setAlignment(Qt::AlignCenter);
-  image_label->setMinimumSize(480, 300);
+  image_label->setMinimumSize(480, 240);
   image_label->setText("Develop an input to preview reconstruction and diagnostics");
   auto *scroll_area = new QScrollArea;
   scroll_area->setWidget(image_label);
@@ -207,10 +356,11 @@ int main(int argc, char **argv) {
 
   auto *log = new QPlainTextEdit;
   log->setReadOnly(true);
-  log->setMinimumHeight(220);
+  log->setMinimumHeight(140);
   log->setPlaceholderText("Processing log");
 
   root->addWidget(input_group);
+  root->addWidget(calibration_group);
   root->addWidget(mode_group);
   root->addWidget(actions);
   root->addWidget(preview_group, 2);
@@ -382,50 +532,61 @@ int main(int argc, char **argv) {
     window.statusBar()->showMessage(command + " scaffolded");
   };
 
-  QObject::connect(calibrate, &QPushButton::clicked, [&]() { run_stub("calibrate"); });
   QObject::connect(stack, &QPushButton::clicked, [&]() { run_stub("stack"); });
-  QObject::connect(develop, &QPushButton::clicked, [&]() {
+
+  const auto run_reconstruction = [&](bool export_result) {
     if(!require_input()) {
       return;
     }
 
-    append_log(log, "develop: running baseline reconstruction fidelity check...");
+    const QString action = export_result ? "develop" : "calibrate";
+    append_log(log, action + ": loading linear CFA and calibration masters...");
+    QApplication::setOverrideCursor(Qt::WaitCursor);
     try {
       const auto frame = astrocfa::load_linear_cfa_file(input_path->text().toStdString());
-      const bool use_inverse_refine = mode->currentText() == "inverse-refine";
-      const bool use_frequency_guided = mode->currentText() == "frequency-guided";
-      const bool use_malvar = mode->currentText() == "malvar-baseline";
-      const bool use_ri = mode->currentText() == "residual-interpolation";
-      const astrocfa::DemosaicResult result =
-          use_inverse_refine
-              ? astrocfa::reconstruct_inverse_refine(frame.cfa, astrocfa::NoiseModel{})
-          : use_frequency_guided
-              ? astrocfa::reconstruct_frequency_guided(frame.cfa, astrocfa::NoiseModel{})
-              : use_malvar
-                    ? astrocfa::reconstruct_malvar_baseline(frame.cfa, astrocfa::NoiseModel{})
-              : use_ri ? astrocfa::reconstruct_residual_interpolation(frame.cfa,
-                                                                      astrocfa::NoiseModel{})
-                       : astrocfa::reconstruct_baseline(frame.cfa, astrocfa::NoiseModel{});
+      const LoadedMaster bias = load_master(bias_path->text());
+      const LoadedMaster dark = load_master(dark_path->text());
+      const LoadedMaster flat = load_master(flat_path->text());
+      const astrocfa::CalibrationResult calibrated = astrocfa::calibrate_cfa(
+          frame.cfa,
+          astrocfa::CalibrationInputs{
+              .bias = bias.cfa(),
+              .dark = dark.cfa(),
+              .flat = flat.cfa(),
+              .options = astrocfa::CalibrationOptions{
+                  .dark_includes_bias = dark_includes_bias->isChecked(),
+              },
+          });
+      const ReconstructionPreset reconstruction =
+          reconstruct_for_preset(mode->currentText(), calibrated.cfa);
+      const astrocfa::DemosaicResult &result = reconstruction.result;
       std::ostringstream report;
       const astrocfa::DemosaicQuality quality =
-          astrocfa::analyze_demosaic_quality(result.image, frame.cfa);
+          astrocfa::analyze_demosaic_quality(result.image, calibrated.cfa);
       *preview_image = to_qimage(astrocfa::make_astro_preview(result.image));
-      *alias_image = to_qimage(astrocfa::make_frequency_alias_risk_map(frame.cfa));
+      *alias_image = to_qimage(astrocfa::make_frequency_alias_risk_map(calibrated.cfa));
       *residual_image = to_qimage(
-          astrocfa::make_remosaic_residual_map(frame.cfa, result.image));
+          astrocfa::make_remosaic_residual_map(calibrated.cfa, result.image));
       update_preview();
-      report << "AstroCFA reconstruction fidelity check\n"
+      report << "AstroCFA calibrated reconstruction\n"
              << "  input: " << input_path->text().toStdString() << "\n"
-             << "  method: "
-             << (use_inverse_refine ? "inverse-refine"
-                 : use_frequency_guided ? "frequency-guided"
-                                      : use_malvar   ? "malvar-baseline"
-                                        : use_ri     ? "residual-interpolation"
-                                                     : "bilinear-baseline")
-             << "\n"
-             << "  dimensions: " << frame.cfa.width() << " x " << frame.cfa.height() << "\n"
+             << "  preset: " << mode->currentText().toStdString() << "\n"
+             << "  method: " << reconstruction.name << "\n"
+             << "  dimensions: " << calibrated.cfa.width() << " x "
+             << calibrated.cfa.height() << "\n";
+      write_master_report("bias", bias, report);
+      write_master_report("dark", dark, report);
+      write_master_report("flat", flat, report);
+      report << "  calibration samples: " << calibrated.stats.samples << "\n"
+             << "  invalid samples: " << calibrated.stats.invalid_samples << "\n"
+             << "  clipped samples: " << calibrated.stats.clipped_samples << "\n"
+             << "  flat floor samples: " << calibrated.stats.flat_floor_samples << "\n"
+             << "  mean before/after: " << std::fixed << std::setprecision(8)
+             << calibrated.stats.mean_before << " / " << calibrated.stats.mean_after << "\n"
+             << "  mean bias subtracted: " << calibrated.stats.mean_bias_subtracted << "\n"
+             << "  mean dark subtracted: " << calibrated.stats.mean_dark_subtracted << "\n"
              << "  remosaic residual samples: " << result.residual.samples << "\n"
-             << "  remosaic residual MAE: " << std::fixed << std::setprecision(8)
+             << "  remosaic residual MAE: "
              << result.residual.mean_absolute << "\n"
              << "  remosaic residual RMS: " << result.residual.root_mean_square << "\n"
              << "  remosaic residual max: " << result.residual.maximum_absolute << "\n"
@@ -435,20 +596,27 @@ int main(int argc, char **argv) {
              << "\n"
              << "  mean interpolated chroma: " << quality.mean_interpolated_chroma
              << "\n";
-      if(!output_path->text().isEmpty()) {
+      if(export_result && !output_path->text().isEmpty()) {
         const std::string path = output_path->text().toStdString();
         astrocfa::write_rgb_image(gui_output_image(result.image, path), path);
         report << "  output: " << output_path->text().toStdString() << "\n";
-      } else {
+      } else if(export_result) {
         report << "  note: no output path selected; choose one to write TIFF/JPEG.\n";
       }
       append_log(log, QString::fromStdString(report.str()));
-      window.statusBar()->showMessage("Develop fidelity check complete");
+      window.statusBar()->showMessage(export_result ? "Develop complete"
+                                                    : "Calibration preview complete");
     } catch(const std::exception &error) {
-      append_log(log, "develop failed: " + QString::fromUtf8(error.what()));
-      window.statusBar()->showMessage("Develop failed");
+      append_log(log, action + " failed: " + QString::fromUtf8(error.what()));
+      window.statusBar()->showMessage(action + " failed");
     }
-  });
+    QApplication::restoreOverrideCursor();
+  };
+
+  QObject::connect(calibrate, &QPushButton::clicked,
+                   [&]() { run_reconstruction(false); });
+  QObject::connect(develop, &QPushButton::clicked,
+                   [&]() { run_reconstruction(true); });
 
   window.show();
   return QApplication::exec();
