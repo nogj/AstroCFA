@@ -75,4 +75,6 @@
   conversion. Implemented.
 - ICC/DCP camera profiles and wide-gamut linear working spaces.
 - Photometric color calibration hooks.
-- Arcsinh and generalized hyperbolic stretch.
+- Luminance-ratio arcsinh and published generalized hyperbolic stretch with
+  exposure, levels, color preservation, and highlight protection. Implemented.
+- Interactive histogram and reusable development presets.

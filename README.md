@@ -38,6 +38,7 @@ editing problems.
 - Star-aware chroma discipline around undersampled and saturated stars.
 - Explicit RAW white balance and camera-to-linear-sRGB color development.
 - Source-resistant additive background modeling with an auditable surface map.
+- Luminance-ratio arcsinh and Generalized Hyperbolic Stretch with star highlights.
 - Classical PSF deconvolution, with no learned priors.
 - Debug maps for clipping, residual, chroma confidence, aliasing, and noise.
 - Reproducible command-line processing with sidecar metadata.
@@ -107,6 +108,9 @@ astrocfa-nogui develop input.dng --method inverse-refine --white-balance dayligh
   --output-space srgb -o developed-linear-srgb.tif
 astrocfa-nogui develop input.dng --method inverse-refine --background gradient \
   --export-background background.tif -o gradient-corrected.tif
+astrocfa-nogui develop input.dng --method inverse-refine --tone ghs \
+  --stretch-factor 3.0 --local-intensity 8 --symmetry-point 0.08 \
+  --protect-highlights 0.80 --saturation 1.05 -o developed-ghs.tif
 astrocfa-nogui develop input.dng --method inverse-refine \
   --wb-multipliers 2.1,1.0,1.4 --output-space camera -o developed-camera-rgb.tif
 astrocfa-nogui develop light.dng --bias master-bias.dng --dark master-dark.dng \
@@ -130,6 +134,15 @@ asymmetric robust weighting to suppress stars, halos, and positive extended
 signal. It removes only the modeled spatial variation and preserves the median
 sky level per channel. `--background neutral` additionally makes that retained
 level achromatic; `--export-background` exposes the fitted surface for review.
+
+Tone mapping is also opt-in in the CLI. `--tone linear|arcsinh|ghs` applies
+exposure, levels, and a selected stretch to TIFF or JPEG output. Arcsinh and GHS
+operate on linear luminance and rescale RGB by the luminance ratio, preserving
+stellar color until gamut compression is required. GHS exposes its local
+intensity, symmetry point, and linear shadow/highlight protection segments.
+Reports include selected black/white points, clipping, and per-pixel gamut
+compression. Without `--tone`, TIFF remains scene-linear; the older
+`--preview-stretch astro` remains a JPEG-only shortcut.
 
 Diagnostic maps can be exported alongside the image. The first maps are Bayer
 alias-risk and remosaicing residual. These are intentionally part of the core
@@ -197,6 +210,8 @@ maps, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
 GUI with real bias/dark/flat calibration, robust directory masters, and
 image/alias-risk/residual/sensor-defect overlays, RAW white-balance selection,
 camera-RGB or linear-sRGB output, and an optional protected background model.
+The GUI tone controls export the same arcsinh, GHS, or linear-level rendering
+shown in its preview.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -482,6 +482,12 @@ int main(int argc, char **argv) {
       astrocfa::BackgroundModelOptions background_options;
       std::string white_balance_mode = "auto";
       std::string output_space = "auto";
+      std::string tone_mode = "none";
+      astrocfa::AstroToneOptions tone_options;
+      bool tone_parameter_explicit = false;
+      bool tone_local_intensity_explicit = false;
+      bool tone_symmetry_explicit = false;
+      bool tone_highlight_explicit = false;
       std::array<double, 3> custom_white_balance = {1.0, 1.0, 1.0};
       bool custom_white_balance_set = false;
       astrocfa::ImageWriteOptions write_options;
@@ -512,6 +518,40 @@ int main(int argc, char **argv) {
           custom_white_balance_set = true;
         } else if(arg == "--output-space" && i + 1 < argc) {
           output_space = argv[++i];
+        } else if(arg == "--tone" && i + 1 < argc) {
+          tone_mode = argv[++i];
+        } else if(arg == "--exposure-ev" && i + 1 < argc) {
+          tone_options.exposure_ev = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
+        } else if(arg == "--black-point" && i + 1 < argc) {
+          tone_options.black_point = std::stod(argv[++i]);
+          tone_options.auto_levels = false;
+          tone_parameter_explicit = true;
+        } else if(arg == "--white-point" && i + 1 < argc) {
+          tone_options.white_point = std::stod(argv[++i]);
+          tone_options.auto_levels = false;
+          tone_parameter_explicit = true;
+        } else if(arg == "--stretch-factor" && i + 1 < argc) {
+          tone_options.stretch_factor = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
+        } else if(arg == "--local-intensity" && i + 1 < argc) {
+          tone_options.local_intensity = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
+          tone_local_intensity_explicit = true;
+        } else if(arg == "--symmetry-point" && i + 1 < argc) {
+          tone_options.symmetry_point = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
+          tone_symmetry_explicit = true;
+        } else if(arg == "--protect-shadows" && i + 1 < argc) {
+          tone_options.shadow_protection = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
+        } else if(arg == "--protect-highlights" && i + 1 < argc) {
+          tone_options.highlight_protection = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
+          tone_highlight_explicit = true;
+        } else if(arg == "--saturation" && i + 1 < argc) {
+          tone_options.saturation = std::stod(argv[++i]);
+          tone_parameter_explicit = true;
         } else if(arg == "--inverse-iterations" && i + 1 < argc) {
           inverse_options.iterations = std::stoi(argv[++i]);
         } else if(arg == "--chroma-smoothness" && i + 1 < argc) {
@@ -582,6 +622,17 @@ int main(int argc, char **argv) {
         throw std::invalid_argument(
             "--export-background requires --background gradient or neutral");
       }
+      if(tone_mode != "none" && tone_mode != "linear" &&
+         tone_mode != "arcsinh" && tone_mode != "ghs") {
+        throw std::invalid_argument("Unsupported tone mode: " + tone_mode);
+      }
+      if(tone_parameter_explicit && tone_mode == "none") {
+        throw std::invalid_argument("Tone parameters require --tone");
+      }
+      if(tone_mode != "none" && preview_stretch != "none") {
+        throw std::invalid_argument(
+            "Use --tone or --preview-stretch, not both");
+      }
       validate_calibration_cli_options(calibration_options);
 
       const auto frame = astrocfa::load_linear_cfa_file(argv[2]);
@@ -614,6 +665,27 @@ int main(int argc, char **argv) {
       const astrocfa::RawColorResult developed = astrocfa::apply_raw_color(
           background ? background->corrected : result.image,
           frame.inspection.color, color_options);
+      std::unique_ptr<astrocfa::AstroToneResult> toned;
+      if(tone_mode != "none") {
+        if(tone_mode == "linear") {
+          tone_options.curve = astrocfa::ToneCurve::linear;
+        } else if(tone_mode == "arcsinh") {
+          tone_options.curve = astrocfa::ToneCurve::arcsinh;
+        } else {
+          if(!tone_local_intensity_explicit) {
+            tone_options.local_intensity = 8.0;
+          }
+          if(!tone_symmetry_explicit) {
+            tone_options.symmetry_point = 0.08;
+          }
+          if(!tone_highlight_explicit) {
+            tone_options.highlight_protection = 0.80;
+          }
+          tone_options.curve = astrocfa::ToneCurve::generalized_hyperbolic;
+        }
+        toned = std::make_unique<astrocfa::AstroToneResult>(
+            astrocfa::apply_astro_tone(developed.image, tone_options));
+      }
       std::cout << "AstroCFA reconstruction fidelity check\n"
                 << "  input: " << argv[2] << "\n"
                 << "  method: " << method << "\n"
@@ -665,6 +737,16 @@ int main(int argc, char **argv) {
                   << background->stats.gradient_peak_to_peak[1] << ", "
                   << background->stats.gradient_peak_to_peak[2] << "]\n";
       }
+      if(toned) {
+        std::cout << "  tone mode: " << tone_mode << "\n"
+                  << "  tone black/white: " << toned->stats.black_point << " / "
+                  << toned->stats.white_point << "\n"
+                  << "  tone shadow/highlight clipped: "
+                  << toned->stats.shadow_clipped_pixels << " / "
+                  << toned->stats.highlight_clipped_pixels << "\n"
+                  << "  tone gamut-compressed pixels: "
+                  << toned->stats.gamut_compressed_pixels << "\n";
+      }
       if(!calibration_options.bias_path.empty() || !calibration_options.dark_path.empty() ||
          !calibration_options.flat_path.empty() || !calibration_options.bias_dir.empty() ||
          !calibration_options.dark_dir.empty() || !calibration_options.flat_dir.empty()) {
@@ -673,7 +755,8 @@ int main(int argc, char **argv) {
       }
       if(!output_path.empty()) {
         astrocfa::write_rgb_image(
-            output_image_for_path(developed.image, output_path, preview_stretch),
+            output_image_for_path(toned ? toned->image : developed.image,
+                                  output_path, preview_stretch),
             output_path, write_options);
         std::cout << "  output: " << output_path << "\n";
         if(preview_stretch == "astro") {

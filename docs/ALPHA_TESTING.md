@@ -38,6 +38,12 @@ astrocfa-nogui develop light.dng \
   -o gradient-corrected.tif
 
 astrocfa-nogui develop light.dng \
+  --method inverse-refine \
+  --tone ghs --stretch-factor 3.0 --local-intensity 8 \
+  --symmetry-point 0.08 --protect-highlights 0.80 \
+  -o ghs-render.tif
+
+astrocfa-nogui develop light.dng \
   --bias-dir bias/ \
   --dark-dir darks/ \
   --flat-dir flats/ \
@@ -73,6 +79,8 @@ Good reports include:
 - selected WB multipliers, output color space, and negative/out-of-range counts.
 - background tile/rejection counts, gradient amplitudes, and the exported fitted
   surface; inspect it for leaked nebulosity or halos before trusting correction.
+- tone black/white points, clipping and gamut-compression counts; compare color
+  and profile width in bright stars against the linear source.
 - for dithered sequences, initial/final CFA RMSE, robust outlier count, RGB
   direct coverage, and whether the joint confidence map matches the dither pattern.
 - for variable-seeing sequences, estimated FWHM/star counts per light, relative

@@ -333,6 +333,27 @@ gamma belong only to the JPEG/GUI preview path. ICC embedding, camera-profile
 interpolation, working spaces wider than sRGB, and photometric color calibration
 remain future work.
 
+## Astro Tone Development
+
+The tone engine supports linear levels, arcsinh, and the published Generalized
+Hyperbolic Stretch family. GHS uses `D = exp(stretch_factor) - 1`, local intensity
+`b`, a symmetry point, and tangent-linear shadow/highlight protection segments,
+then normalizes the complete function to map zero and one exactly. The equations
+follow the [GHS process reference](https://www.ghsastro.co.uk/doc/tools/GeneralizedHyperbolicStretch/GeneralizedHyperbolicStretch.html#transformation_equations).
+
+Nonlinear transforms operate in a color-preserving mode. The engine derives
+linear luminance, transforms it once, and scales RGB by the transformed/original
+luminance ratio. Optional saturation is applied around the transformed luminance.
+If a channel would leave the display gamut, chroma is compressed toward that
+luminance rather than independently clipping the channel. This is especially
+important for maintaining star color through aggressive stretches.
+
+Automatic black and white points use configurable luminance percentiles. Manual
+points, scene-linear exposure compensation, and clipping counts remain explicit.
+The report records shadow/highlight clipping and gamut-compressed pixels. CLI
+tone mapping is opt-in so an ordinary TIFF stays linear; the Qt preview and its
+export deliberately share the selected tone transform.
+
 ## Diagnostic Maps
 
 Every high-quality run should be able to emit:

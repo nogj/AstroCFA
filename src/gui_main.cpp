@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -54,6 +55,16 @@ QPushButton *make_button(const QString &text, const QString &tooltip) {
   return button;
 }
 
+QDoubleSpinBox *make_spin(double minimum, double maximum, double value,
+                          double step, int decimals = 2) {
+  auto *spin = new QDoubleSpinBox;
+  spin->setRange(minimum, maximum);
+  spin->setValue(value);
+  spin->setSingleStep(step);
+  spin->setDecimals(decimals);
+  return spin;
+}
+
 void append_log(QPlainTextEdit *log, const QString &message) {
   log->appendPlainText(message);
 }
@@ -77,26 +88,6 @@ QImage to_qimage(const astrocfa::RgbImage &image) {
     }
   }
   return qimage;
-}
-
-std::string lowercase_extension(const std::string &path) {
-  const std::size_t dot = path.find_last_of('.');
-  if(dot == std::string::npos) {
-    return {};
-  }
-  std::string extension = path.substr(dot + 1);
-  std::transform(extension.begin(), extension.end(), extension.begin(),
-                 [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-  return extension;
-}
-
-astrocfa::RgbImage gui_output_image(const astrocfa::RgbImage &linear,
-                                    const std::string &path) {
-  const std::string extension = lowercase_extension(path);
-  if(extension == "jpg" || extension == "jpeg") {
-    return astrocfa::make_astro_preview(linear);
-  }
-  return linear;
 }
 
 bool is_raw_like_path(const std::filesystem::path &path) {
@@ -302,6 +293,13 @@ int main(int argc, char **argv) {
   auto *white_balance = new QComboBox;
   auto *output_space = new QComboBox;
   auto *background_correction = new QComboBox;
+  auto *tone_curve = new QComboBox;
+  auto *tone_exposure = make_spin(-10.0, 10.0, 0.0, 0.1);
+  auto *tone_strength = make_spin(0.0, 20.0, 3.0, 0.1);
+  auto *tone_local_intensity = make_spin(-5.0, 15.0, 0.0, 0.5);
+  auto *tone_symmetry = make_spin(0.0, 1.0, 0.0, 0.01, 4);
+  auto *tone_highlights = make_spin(0.0, 1.0, 1.0, 0.01, 4);
+  auto *tone_saturation = make_spin(0.0, 4.0, 1.0, 0.05);
   linear_cfa->setToolTip("Load normalized CFA samples without demosaicing");
   star_candidates->setToolTip("Detect bright candidates on a CFA-safe luminance proxy");
   noise_model->setToolTip("Show the initial Poisson-Gaussian noise model");
@@ -327,6 +325,16 @@ int main(int argc, char **argv) {
   background_correction->addItem("gradient + neutral");
   background_correction->setToolTip(
       "Fit a source-resistant additive sky surface in camera RGB");
+  tone_curve->addItem("arcsinh");
+  tone_curve->addItem("GHS");
+  tone_curve->addItem("linear levels");
+  tone_curve->setToolTip("Select the luminance-preserving output transform");
+  tone_exposure->setToolTip("Scene-linear exposure compensation in EV");
+  tone_strength->setToolTip("ln(D + 1) stretch factor");
+  tone_local_intensity->setToolTip("GHS local intensity b");
+  tone_symmetry->setToolTip("Point of maximum stretch intensity");
+  tone_highlights->setToolTip("Start of the linear highlight-protection segment");
+  tone_saturation->setToolTip("Chroma scale after luminance stretching");
   mode_layout->addWidget(new QLabel("Reconstruction"), 0, 0);
   mode_layout->addWidget(mode, 0, 1);
   mode_layout->addWidget(linear_cfa, 0, 2);
@@ -339,6 +347,33 @@ int main(int argc, char **argv) {
   mode_layout->addWidget(output_space, 1, 3);
   mode_layout->addWidget(new QLabel("Background"), 1, 4);
   mode_layout->addWidget(background_correction, 1, 5);
+  mode_layout->addWidget(new QLabel("Tone"), 2, 0);
+  mode_layout->addWidget(tone_curve, 2, 1);
+  mode_layout->addWidget(new QLabel("Exposure EV"), 2, 2);
+  mode_layout->addWidget(tone_exposure, 2, 3);
+  mode_layout->addWidget(new QLabel("Stretch"), 2, 4);
+  mode_layout->addWidget(tone_strength, 2, 5);
+  mode_layout->addWidget(new QLabel("Local intensity"), 3, 0);
+  mode_layout->addWidget(tone_local_intensity, 3, 1);
+  mode_layout->addWidget(new QLabel("Symmetry"), 3, 2);
+  mode_layout->addWidget(tone_symmetry, 3, 3);
+  mode_layout->addWidget(new QLabel("Protect highlights"), 3, 4);
+  mode_layout->addWidget(tone_highlights, 3, 5);
+  mode_layout->addWidget(new QLabel("Saturation"), 4, 0);
+  mode_layout->addWidget(tone_saturation, 4, 1);
+
+  QObject::connect(tone_curve, &QComboBox::currentTextChanged,
+                   [=](const QString &value) {
+                     if(value == "GHS") {
+                       tone_local_intensity->setValue(8.0);
+                       tone_symmetry->setValue(0.08);
+                       tone_highlights->setValue(0.80);
+                     } else {
+                       tone_local_intensity->setValue(0.0);
+                       tone_symmetry->setValue(0.0);
+                       tone_highlights->setValue(1.0);
+                     }
+                   });
 
   auto *actions = new QWidget;
   auto *actions_layout = new QHBoxLayout(actions);
@@ -629,10 +664,27 @@ int main(int argc, char **argv) {
       const astrocfa::RawColorResult developed = astrocfa::apply_raw_color(
           background ? background->corrected : result.image,
           frame.inspection.color, color_options);
+      astrocfa::ToneCurve selected_curve = astrocfa::ToneCurve::arcsinh;
+      if(tone_curve->currentText() == "GHS") {
+        selected_curve = astrocfa::ToneCurve::generalized_hyperbolic;
+      } else if(tone_curve->currentText() == "linear levels") {
+        selected_curve = astrocfa::ToneCurve::linear;
+      }
+      const astrocfa::AstroToneResult toned = astrocfa::apply_astro_tone(
+          developed.image,
+          astrocfa::AstroToneOptions{
+              .curve = selected_curve,
+              .exposure_ev = tone_exposure->value(),
+              .stretch_factor = tone_strength->value(),
+              .local_intensity = tone_local_intensity->value(),
+              .symmetry_point = tone_symmetry->value(),
+              .highlight_protection = tone_highlights->value(),
+              .saturation = tone_saturation->value(),
+          });
       std::ostringstream report;
       const astrocfa::DemosaicQuality quality =
           astrocfa::analyze_demosaic_quality(result.image, calibrated.cfa);
-      *preview_image = to_qimage(astrocfa::make_astro_preview(developed.image));
+      *preview_image = to_qimage(toned.image);
       *alias_image = to_qimage(astrocfa::make_frequency_alias_risk_map(calibrated.cfa));
       *residual_image = to_qimage(
           astrocfa::make_remosaic_residual_map(calibrated.cfa, result.image));
@@ -691,6 +743,15 @@ int main(int argc, char **argv) {
              << "  negative/out-of-range pixels: "
              << developed.stats.negative_pixels << " / "
              << developed.stats.over_range_pixels << "\n";
+      report << "  tone curve: " << tone_curve->currentText().toStdString()
+             << "\n"
+             << "  tone black/white: " << toned.stats.black_point << " / "
+             << toned.stats.white_point << "\n"
+             << "  tone shadow/highlight clipped: "
+             << toned.stats.shadow_clipped_pixels << " / "
+             << toned.stats.highlight_clipped_pixels << "\n"
+             << "  tone gamut-compressed pixels: "
+             << toned.stats.gamut_compressed_pixels << "\n";
       if(background) {
         report << "  background correction: "
                << background_correction->currentText().toStdString() << "\n"
@@ -706,7 +767,7 @@ int main(int argc, char **argv) {
       }
       if(export_result && !output_path->text().isEmpty()) {
         const std::string path = output_path->text().toStdString();
-        astrocfa::write_rgb_image(gui_output_image(developed.image, path), path);
+        astrocfa::write_rgb_image(toned.image, path);
         report << "  output: " << output_path->text().toStdString() << "\n";
       } else if(export_result) {
         report << "  note: no output path selected; choose one to write TIFF/JPEG.\n";
