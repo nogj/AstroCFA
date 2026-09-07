@@ -416,6 +416,10 @@ int main(int argc, char **argv) {
           inverse_options.alias_suppression = std::stod(argv[++i]);
         } else if(arg == "--edge-sensitivity" && i + 1 < argc) {
           inverse_options.edge_sensitivity = std::stod(argv[++i]);
+        } else if(arg == "--star-chroma-guard" && i + 1 < argc) {
+          inverse_options.star_chroma_guard = std::stod(argv[++i]);
+        } else if(arg == "--star-luma-threshold" && i + 1 < argc) {
+          inverse_options.star_luma_threshold = std::stod(argv[++i]);
         } else if(arg == "--bias" && i + 1 < argc) {
           calibration_options.bias_path = argv[++i];
         } else if(arg == "--dark" && i + 1 < argc) {
@@ -544,6 +548,10 @@ int main(int argc, char **argv) {
           inverse_options.alias_suppression = std::stod(argv[++i]);
         } else if(arg == "--edge-sensitivity" && i + 1 < argc) {
           inverse_options.edge_sensitivity = std::stod(argv[++i]);
+        } else if(arg == "--star-chroma-guard" && i + 1 < argc) {
+          inverse_options.star_chroma_guard = std::stod(argv[++i]);
+        } else if(arg == "--star-luma-threshold" && i + 1 < argc) {
+          inverse_options.star_luma_threshold = std::stod(argv[++i]);
         } else if(arg == "--bias" && i + 1 < argc) {
           calibration_options.bias_path = argv[++i];
         } else if(arg == "--dark" && i + 1 < argc) {
@@ -648,6 +656,7 @@ int main(int argc, char **argv) {
           "malvar-baseline",
           "residual-interpolation",
           "frequency-guided",
+          "inverse-refine-no-star-guard",
           "inverse-refine",
       };
 
@@ -670,8 +679,13 @@ int main(int argc, char **argv) {
         astrocfa::InverseRefinementOptions inverse_options;
         inverse_options.frequency.tile_size = 16;
         inverse_options.iterations = 3;
+        const std::string reconstruction_method =
+            method == "inverse-refine-no-star-guard" ? "inverse-refine" : method;
+        if(method == "inverse-refine-no-star-guard") {
+          inverse_options.star_chroma_guard = 0.0;
+        }
         const astrocfa::DemosaicResult result =
-            reconstruct_with_method(scene.cfa, method, inverse_options);
+            reconstruct_with_method(scene.cfa, reconstruction_method, inverse_options);
         const astrocfa::ReconstructionMetrics metrics =
             astrocfa::measure_reconstruction(scene.truth, result.image, scene.cfa,
                                              scene.stars);

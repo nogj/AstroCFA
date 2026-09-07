@@ -147,6 +147,14 @@ Weights prefer neighbors across small luminance changes, give extra authority
 to real measured red/blue anchors, downweight invalid or clipped samples, and
 increase chroma caution in high alias-risk tiles.
 
+The solver also includes a star chroma guard. Compact luminance peaks are where
+single-frame Bayer demosaicing most often invents magenta/green stellar cores.
+For unmeasured red/blue channels, AstroCFA can reduce unsupported chroma in
+these PSF-like peaks while still restoring the measured CFA channel exactly.
+This is intentionally tunable: white undersampled stars benefit from stronger
+guarding, while fields with reliable color sampling or larger PSFs can use a
+lighter setting.
+
 This is a conservative first inverse stage rather than a full variational
 optimizer. Its purpose is to make the underdetermined part of demosaicing
 explicit and measurable: preserve sensor samples, reduce unsupported chroma

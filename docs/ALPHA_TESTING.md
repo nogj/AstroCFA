@@ -36,6 +36,8 @@ Good reports include:
 - console output with residual/chroma metrics;
 - whether the alias-risk and residual maps look plausible;
 - crops around undersampled stars, saturated stars, and flat-field defects.
+- whether `inverse-refine` improves or harms star color compared with
+  `inverse-refine-no-star-guard` in `benchmark-debayer`.
 
 Do not treat current output as color-managed final data. TIFF export is linear
 sensor RGB, and JPEG export is a preview path.

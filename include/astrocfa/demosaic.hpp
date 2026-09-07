@@ -24,6 +24,8 @@ struct InverseRefinementOptions {
   double chroma_smoothness = 0.55;
   double edge_sensitivity = 28.0;
   double alias_suppression = 0.45;
+  double star_chroma_guard = 0.35;
+  double star_luma_threshold = 0.08;
 };
 
 struct DemosaicResult {

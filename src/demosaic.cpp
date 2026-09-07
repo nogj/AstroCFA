@@ -137,10 +137,56 @@ void set_channel_value(astrocfa::RgbPixel &pixel, int channel, float value) {
 
 double luminance_gradient(const astrocfa::RgbImage &image, std::size_t x0, std::size_t y0,
                           std::size_t x1, std::size_t y1) {
-  const auto luma = [](astrocfa::RgbPixel pixel) {
-    return 0.2126 * pixel.r + 0.7152 * pixel.g + 0.0722 * pixel.b;
-  };
-  return std::abs(luma(image.pixel(x0, y0)) - luma(image.pixel(x1, y1)));
+  return std::abs(0.2126 * image.pixel(x0, y0).r + 0.7152 * image.pixel(x0, y0).g +
+                  0.0722 * image.pixel(x0, y0).b -
+                  (0.2126 * image.pixel(x1, y1).r + 0.7152 * image.pixel(x1, y1).g +
+                   0.0722 * image.pixel(x1, y1).b));
+}
+
+double pixel_luma(astrocfa::RgbPixel pixel) {
+  return 0.2126 * pixel.r + 0.7152 * pixel.g + 0.0722 * pixel.b;
+}
+
+double star_peak_likelihood(const astrocfa::RgbImage &image, std::size_t x, std::size_t y,
+                            const astrocfa::InverseRefinementOptions &options) {
+  if(options.star_chroma_guard <= 0.0 || options.star_luma_threshold <= 0.0) {
+    return 0.0;
+  }
+
+  const auto width = static_cast<int>(image.width());
+  const auto height = static_cast<int>(image.height());
+  const int ix = static_cast<int>(x);
+  const int iy = static_cast<int>(y);
+  const double center = pixel_luma(image.pixel(x, y));
+  double ring_sum = 0.0;
+  std::size_t ring_count = 0;
+
+  for(int dy = -2; dy <= 2; ++dy) {
+    for(int dx = -2; dx <= 2; ++dx) {
+      if(std::abs(dx) != 2 && std::abs(dy) != 2) {
+        continue;
+      }
+      const int nx = ix + dx;
+      const int ny = iy + dy;
+      if(nx < 0 || ny < 0 || nx >= width || ny >= height) {
+        continue;
+      }
+      ring_sum += pixel_luma(image.pixel(static_cast<std::size_t>(nx),
+                                         static_cast<std::size_t>(ny)));
+      ring_count += 1;
+    }
+  }
+
+  if(ring_count == 0) {
+    return 0.0;
+  }
+
+  const double ring_mean = ring_sum / static_cast<double>(ring_count);
+  const double peak = center - ring_mean;
+  if(peak <= 0.0) {
+    return 0.0;
+  }
+  return std::clamp(peak / options.star_luma_threshold, 0.0, 1.0);
 }
 
 float refined_chroma_at(const astrocfa::CfaFrame &cfa, const astrocfa::RgbImage &current,
@@ -195,8 +241,12 @@ float refined_chroma_at(const astrocfa::CfaFrame &cfa, const astrocfa::RgbImage 
   const double alias = std::clamp(risk_map.pixel_risk(x, y), 0.0, 1.0);
   const double smoothness =
       std::clamp(options.chroma_smoothness + alias * options.alias_suppression, 0.0, 1.0);
-  return static_cast<float>((1.0 - smoothness) * center_chroma +
-                            smoothness * neighbor_average);
+  double refined = (1.0 - smoothness) * center_chroma + smoothness * neighbor_average;
+  const double star_guard =
+      std::clamp(options.star_chroma_guard, 0.0, 1.0) *
+      star_peak_likelihood(current, x, y, options) * std::max(0.35, alias);
+  refined *= (1.0 - star_guard);
+  return static_cast<float>(refined);
 }
 
 void restore_measured_channel(const astrocfa::CfaFrame &cfa, std::size_t x, std::size_t y,

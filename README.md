@@ -108,6 +108,10 @@ candidate. It reports RGB error, chroma error, false star color, star luminance
 error, and remosaicing residual. This is the early guardrail for keeping
 AstroCFA's reconstruction work measurable rather than merely aesthetic.
 
+The inverse refinement path includes an optional star chroma guard for compact
+PSF-like highlights. It is designed to reduce false magenta/green star cores
+from unsupported Bayer chroma while preserving measured CFA samples exactly.
+
 ## Status
 
 This repository is an early but runnable prototype. It includes RAW/DNG
