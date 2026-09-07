@@ -51,6 +51,7 @@ add_library(astrocfa_core
   src/demosaic.cpp
   src/drizzle.cpp
   src/frequency_cfa.cpp
+  src/image_reader.cpp
   src/image_writer.cpp
   src/joint_reconstruction.cpp
   src/luminance_proxy.cpp
@@ -240,6 +241,14 @@ add_test(NAME astrocfa_nogui_help COMMAND astrocfa-nogui --help)
 add_test(NAME astrocfa_nogui_version COMMAND astrocfa-nogui --version)
 add_test(NAME astrocfa_nogui_inspect_requires_input COMMAND astrocfa-nogui inspect)
 set_tests_properties(astrocfa_nogui_inspect_requires_input PROPERTIES WILL_FAIL TRUE)
+add_test(
+  NAME astrocfa_external_benchmark
+  COMMAND astrocfa-nogui benchmark-debayer
+    --width 128 --height 96 --seed 31 --noise none
+    --export-prefix ${CMAKE_CURRENT_BINARY_DIR}/external-benchmark/scene
+    --external truth-control=${CMAKE_CURRENT_BINARY_DIR}/external-benchmark/scene-truth.tif
+    --csv ${CMAKE_CURRENT_BINARY_DIR}/external-benchmark/results.csv
+)
 add_test(NAME astrocfa_cfa_tests COMMAND astrocfa_cfa_tests)
 add_test(NAME astrocfa_calibration_tests COMMAND astrocfa_calibration_tests)
 add_test(NAME astrocfa_component_tests COMMAND astrocfa_component_tests)

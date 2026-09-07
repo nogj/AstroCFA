@@ -11,6 +11,10 @@ Useful smoke tests:
 astrocfa-nogui benchmark-debayer
 
 astrocfa-nogui benchmark-debayer --export-prefix benchmark/scene
+astrocfa-nogui benchmark-debayer --width 512 --height 384 --seed 7 \
+  --export-prefix benchmark/scene-007
+astrocfa-nogui benchmark-debayer --width 512 --height 384 --seed 7 \
+  --external external-rcd=benchmark/rt-rcd.tif --csv benchmark/results.csv
 
 astrocfa-nogui benchmark-joint --export-prefix benchmark/joint
 
@@ -67,6 +71,8 @@ Good reports include:
 
 - operating system and build source;
 - `benchmark-debayer` output when possible;
+- external demosaicer version, processing profile and fixture manifest when using
+  `--external`;
 - `benchmark-joint` output for dithered-data or joint-solver reports;
 - camera model and RAW format;
 - exact command or GUI steps;

@@ -96,6 +96,76 @@ void write_rgb_tiff16(const RgbImage &image, const std::string &path) {
   TIFFClose(tiff);
 }
 
+void write_linear_cfa_dng16(const CfaFrame &cfa, const std::string &path) {
+  TIFF *tiff = TIFFOpen(path.c_str(), "w");
+  if(tiff == nullptr) {
+    throw std::runtime_error("Cannot open DNG for writing: " + path);
+  }
+
+  const std::array<std::uint8_t, 4> dng_version = {1, 4, 0, 0};
+  const std::array<std::uint8_t, 4> backward_version = {1, 1, 0, 0};
+  const std::array<std::uint16_t, 2> cfa_dimensions = {2, 2};
+  std::array<std::uint8_t, 4> cfa_pattern{};
+  for(std::size_t index = 0; index < cfa_pattern.size(); ++index) {
+    const CfaColor color = cfa.pattern().phase[index];
+    cfa_pattern[index] = color == CfaColor::red ? 0U
+                         : color == CfaColor::blue ? 2U
+                                                   : 1U;
+  }
+  const std::array<std::uint8_t, 3> cfa_plane_color = {0, 1, 2};
+  const std::array<float, 9> color_matrix = {
+      1.0F, 0.0F, 0.0F,
+      0.0F, 1.0F, 0.0F,
+      0.0F, 0.0F, 1.0F,
+  };
+  const std::array<float, 3> as_shot_neutral = {1.0F, 1.0F, 1.0F};
+  const std::array<std::uint32_t, 1> white_level = {65535U};
+
+  TIFFSetField(tiff, TIFFTAG_IMAGEWIDTH, static_cast<std::uint32_t>(cfa.width()));
+  TIFFSetField(tiff, TIFFTAG_IMAGELENGTH, static_cast<std::uint32_t>(cfa.height()));
+  TIFFSetField(tiff, TIFFTAG_SAMPLESPERPIXEL, 1);
+  TIFFSetField(tiff, TIFFTAG_BITSPERSAMPLE, 16);
+  TIFFSetField(tiff, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+  TIFFSetField(tiff, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+  TIFFSetField(tiff, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+  TIFFSetField(tiff, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_CFA);
+  TIFFSetField(tiff, TIFFTAG_COMPRESSION, COMPRESSION_NONE);
+  TIFFSetField(tiff, TIFFTAG_ROWSPERSTRIP, TIFFDefaultStripSize(tiff, 0));
+  TIFFSetField(tiff, TIFFTAG_MAKE, "AstroCFA");
+  TIFFSetField(tiff, TIFFTAG_MODEL, "Synthetic CFA benchmark");
+  TIFFSetField(tiff, TIFFTAG_SOFTWARE, "AstroCFA benchmark-debayer");
+  TIFFSetField(tiff, TIFFTAG_DNGVERSION, dng_version.data());
+  TIFFSetField(tiff, TIFFTAG_DNGBACKWARDVERSION, backward_version.data());
+  TIFFSetField(tiff, TIFFTAG_UNIQUECAMERAMODEL, "AstroCFA Synthetic Linear CFA");
+  TIFFSetField(tiff, TIFFTAG_CFAREPEATPATTERNDIM, cfa_dimensions.data());
+  TIFFSetField(tiff, TIFFTAG_CFAPATTERN,
+               static_cast<std::uint16_t>(cfa_pattern.size()), cfa_pattern.data());
+  TIFFSetField(tiff, TIFFTAG_CFAPLANECOLOR,
+               static_cast<std::uint16_t>(cfa_plane_color.size()),
+               cfa_plane_color.data());
+  TIFFSetField(tiff, TIFFTAG_CFALAYOUT, 1);
+  TIFFSetField(tiff, TIFFTAG_WHITELEVEL, 1U, white_level.data());
+  TIFFSetField(tiff, TIFFTAG_COLORMATRIX1,
+               static_cast<std::uint16_t>(color_matrix.size()), color_matrix.data());
+  TIFFSetField(tiff, TIFFTAG_ASSHOTNEUTRAL,
+               static_cast<std::uint16_t>(as_shot_neutral.size()),
+               as_shot_neutral.data());
+  TIFFSetField(tiff, TIFFTAG_CALIBRATIONILLUMINANT1, 21);
+
+  std::vector<std::uint16_t> row(cfa.width());
+  for(std::size_t y = 0; y < cfa.height(); ++y) {
+    for(std::size_t x = 0; x < cfa.width(); ++x) {
+      row[x] = to_u16(cfa.sample_info(x, y).value);
+    }
+    if(TIFFWriteScanline(tiff, row.data(), static_cast<std::uint32_t>(y), 0) < 0) {
+      TIFFClose(tiff);
+      throw std::runtime_error("Failed while writing DNG scanline");
+    }
+  }
+
+  TIFFClose(tiff);
+}
+
 void write_rgb_jpeg8(const RgbImage &image, const std::string &path,
                      ImageWriteOptions options) {
   FILE *file = std::fopen(path.c_str(), "wb");
@@ -137,4 +207,3 @@ void write_rgb_jpeg8(const RgbImage &image, const std::string &path,
 }
 
 } // namespace astrocfa
-

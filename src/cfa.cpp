@@ -81,6 +81,23 @@ CfaFrame remosaic(const RgbImage &image, BayerPattern pattern) {
   return cfa;
 }
 
+CfaFrame quantize_cfa(const CfaFrame &input, std::uint32_t maximum_code) {
+  if(maximum_code == 0) {
+    throw std::invalid_argument("CFA quantization maximum code must be positive");
+  }
+  CfaFrame output(input.width(), input.height(), input.pattern());
+  const double scale = static_cast<double>(maximum_code);
+  for(std::size_t y = 0; y < input.height(); ++y) {
+    for(std::size_t x = 0; x < input.width(); ++x) {
+      CfaSample sample = input.sample_info(x, y);
+      const double bounded = std::clamp(static_cast<double>(sample.value), 0.0, 1.0);
+      sample.value = static_cast<float>(std::round(bounded * scale) / scale);
+      output.set_sample(x, y, sample);
+    }
+  }
+  return output;
+}
+
 RemosaicResidual compute_remosaic_residual(const CfaFrame &measured,
                                            const RgbImage &reconstructed) {
   if(measured.width() != reconstructed.width() || measured.height() != reconstructed.height()) {

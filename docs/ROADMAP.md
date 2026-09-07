@@ -55,6 +55,10 @@
 - LMMSE-style noisy-frame mode.
 - Remosaicing residual metric.
 - Synthetic star-field test images with known ground truth.
+- Linear CFA DNG fixture export and common-metric ingestion of external TIFF
+  demosaicers. Implemented.
+- Publish a multi-seed real/synthetic comparison against RCD, AMaZE, LMMSE and
+  mature CFA-drizzle pipelines.
 
 ## Milestone 6: Faithful Astro Reconstruction
 

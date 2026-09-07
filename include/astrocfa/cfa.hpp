@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
@@ -92,6 +93,8 @@ struct RemosaicResidual {
 
 [[nodiscard]] float remosaic_pixel(RgbPixel pixel, CfaColor color);
 [[nodiscard]] CfaFrame remosaic(const RgbImage &image, BayerPattern pattern);
+[[nodiscard]] CfaFrame quantize_cfa(const CfaFrame &input,
+                                    std::uint32_t maximum_code);
 [[nodiscard]] RemosaicResidual compute_remosaic_residual(const CfaFrame &measured,
                                                          const RgbImage &reconstructed);
 [[nodiscard]] NoiseWeightedResidual

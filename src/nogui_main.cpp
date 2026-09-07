@@ -5,6 +5,7 @@
 #include "astrocfa/demosaic.hpp"
 #include "astrocfa/drizzle.hpp"
 #include "astrocfa/frequency_cfa.hpp"
+#include "astrocfa/image_reader.hpp"
 #include "astrocfa/image_writer.hpp"
 #include "astrocfa/joint_reconstruction.hpp"
 #include "astrocfa/multiframe_benchmark.hpp"
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -294,6 +296,50 @@ std::string join_output_path(const std::string &prefix, const std::string &suffi
   return prefix + suffix;
 }
 
+void ensure_parent_directory(const std::string &path) {
+  const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+  if(!parent.empty()) {
+    std::filesystem::create_directories(parent);
+  }
+}
+
+void write_benchmark_fixture_metadata(
+    const std::string &prefix, const astrocfa::SyntheticAstroSceneOptions &options,
+    const astrocfa::SyntheticAstroScene &scene) {
+  const std::string stars_path = join_output_path(prefix, "-stars.csv");
+  std::ofstream stars(stars_path);
+  if(!stars) {
+    throw std::runtime_error("Cannot open benchmark star catalogue: " + stars_path);
+  }
+  stars << "x,y,flux,sigma,r,g,b\n" << std::setprecision(12);
+  for(const astrocfa::SyntheticStar &star : scene.stars) {
+    stars << star.x << ',' << star.y << ',' << star.flux << ',' << star.sigma << ','
+          << star.color.r << ',' << star.color.g << ',' << star.color.b << '\n';
+  }
+
+  const std::string manifest_path = join_output_path(prefix, "-manifest.json");
+  std::ofstream manifest(manifest_path);
+  if(!manifest) {
+    throw std::runtime_error("Cannot open benchmark manifest: " + manifest_path);
+  }
+  const std::string base = std::filesystem::path(prefix).filename().string();
+  manifest << std::setprecision(12)
+           << "{\n"
+           << "  \"schema\": \"astrocfa-debayer-benchmark-v1\",\n"
+           << "  \"astrocfa_version\": \"" << astrocfa::version << "\",\n"
+           << "  \"width\": " << options.width << ",\n"
+           << "  \"height\": " << options.height << ",\n"
+           << "  \"seed\": " << options.seed << ",\n"
+           << "  \"noise\": \"" << (options.add_noise ? "astro" : "none") << "\",\n"
+           << "  \"read_noise\": " << options.read_noise << ",\n"
+           << "  \"shot_noise_scale\": " << options.shot_noise_scale << ",\n"
+           << "  \"input\": \"" << base << "-input.dng\",\n"
+           << "  \"truth\": \"" << base << "-truth.tif\",\n"
+           << "  \"stars\": \"" << base << "-stars.csv\",\n"
+           << "  \"candidate_contract\": \"top-left linear camera RGB, unity white balance, no color transform, no tone curve, same dimensions\"\n"
+           << "}\n";
+}
+
 void write_benchmark_row(const std::string &method,
                          const astrocfa::ReconstructionMetrics &metrics,
                          std::ostream &out) {
@@ -308,6 +354,50 @@ void write_benchmark_row(const std::string &method,
       << " star_fwhm_rel=" << metrics.star_fwhm_relative_error
       << " star_elongation=" << metrics.star_elongation_error
       << " cfa_mae=" << metrics.cfa_residual_mae << "\n";
+}
+
+struct ExternalBenchmarkCandidate {
+  std::string name;
+  std::string path;
+};
+
+ExternalBenchmarkCandidate parse_external_candidate(const std::string &text) {
+  const std::size_t equals = text.find('=');
+  if(equals == std::string::npos || equals == 0 || equals + 1U >= text.size()) {
+    throw std::invalid_argument("External candidate must use name=linear-rgb.tif format");
+  }
+  return {.name = text.substr(0, equals), .path = text.substr(equals + 1U)};
+}
+
+std::string csv_field(const std::string &value) {
+  if(value.find_first_of(",\"\n\r") == std::string::npos) {
+    return value;
+  }
+  std::string escaped = "\"";
+  for(const char character : value) {
+    escaped += character == '\"' ? "\"\"" : std::string(1, character);
+  }
+  escaped += '\"';
+  return escaped;
+}
+
+void write_benchmark_csv_header(std::ostream &out) {
+  out << "method,rgb_mae,rgb_rmse,max_abs_error,chroma_mae,star_false_color,"
+         "star_luma_rmse,star_flux_relative_error,star_flux_relative_bias,"
+         "star_fwhm_relative_error,star_elongation_error,cfa_residual_mae,"
+         "rgb_samples,star_samples,measured_stars\n";
+}
+
+void write_benchmark_csv_row(const std::string &method,
+                             const astrocfa::ReconstructionMetrics &metrics,
+                             std::ostream &out) {
+  out << csv_field(method) << std::setprecision(12) << ',' << metrics.rgb_mae << ','
+      << metrics.rgb_rmse << ',' << metrics.max_abs_error << ',' << metrics.chroma_mae
+      << ',' << metrics.star_false_color << ',' << metrics.star_luma_rmse << ','
+      << metrics.star_flux_relative_error << ',' << metrics.star_flux_relative_bias
+      << ',' << metrics.star_fwhm_relative_error << ',' << metrics.star_elongation_error
+      << ',' << metrics.cfa_residual_mae << ',' << metrics.samples << ','
+      << metrics.star_samples << ',' << metrics.measured_stars << '\n';
 }
 
 void write_multiframe_benchmark_row(
@@ -912,6 +1002,8 @@ int main(int argc, char **argv) {
   if(arg1 == "benchmark-debayer") {
     astrocfa::SyntheticAstroSceneOptions scene_options;
     std::string export_prefix;
+    std::string csv_path;
+    std::vector<ExternalBenchmarkCandidate> external_candidates;
 
     try {
       for(int i = 2; i < argc; ++i) {
@@ -935,6 +1027,10 @@ int main(int argc, char **argv) {
           }
         } else if(arg == "--export-prefix" && i + 1 < argc) {
           export_prefix = argv[++i];
+        } else if(arg == "--external" && i + 1 < argc) {
+          external_candidates.push_back(parse_external_candidate(argv[++i]));
+        } else if(arg == "--csv" && i + 1 < argc) {
+          csv_path = argv[++i];
         } else {
           throw std::invalid_argument("Unknown benchmark-debayer option: " + arg);
         }
@@ -944,8 +1040,9 @@ int main(int argc, char **argv) {
         throw std::invalid_argument("Benchmark scene must be at least 16x16");
       }
 
-      const astrocfa::SyntheticAstroScene scene =
+      astrocfa::SyntheticAstroScene scene =
           astrocfa::make_synthetic_astro_scene(scene_options);
+      scene.cfa = astrocfa::quantize_cfa(scene.cfa, 65535U);
       const std::vector<std::string> methods = {
           "bilinear-baseline",
           "malvar-baseline",
@@ -965,10 +1062,18 @@ int main(int argc, char **argv) {
                 << "  note: lower metrics are better; cfa_mae audits measured-sample fidelity.\n";
 
       if(!export_prefix.empty()) {
+        ensure_parent_directory(export_prefix);
         astrocfa::write_rgb_image(scene.truth, join_output_path(export_prefix, "-truth.tif"));
         astrocfa::write_rgb_image(cfa_to_grayscale_rgb(scene.cfa),
                                   join_output_path(export_prefix, "-cfa.tif"));
+        astrocfa::write_linear_cfa_dng16(
+            scene.cfa, join_output_path(export_prefix, "-input.dng"));
+        write_benchmark_fixture_metadata(export_prefix, scene_options, scene);
+        std::cout << "  fixture input: " << export_prefix << "-input.dng\n"
+                  << "  fixture manifest: " << export_prefix << "-manifest.json\n";
       }
+
+      std::vector<std::pair<std::string, astrocfa::ReconstructionMetrics>> rows;
 
       for(const std::string &method : methods) {
         astrocfa::InverseRefinementOptions inverse_options;
@@ -985,12 +1090,39 @@ int main(int argc, char **argv) {
             astrocfa::measure_reconstruction(scene.truth, result.image, scene.cfa,
                                              scene.stars);
         write_benchmark_row(method, metrics, std::cout);
+        rows.emplace_back(method, metrics);
 
         if(!export_prefix.empty()) {
           astrocfa::write_rgb_image(
               astrocfa::make_astro_preview(result.image),
               join_output_path(export_prefix, "-" + method + ".jpg"));
         }
+      }
+
+      for(const ExternalBenchmarkCandidate &candidate : external_candidates) {
+        const astrocfa::RgbImage image = astrocfa::read_linear_rgb_tiff(candidate.path);
+        if(image.width() != scene.truth.width() ||
+           image.height() != scene.truth.height()) {
+          throw std::invalid_argument("External candidate '" + candidate.name +
+                                      "' dimensions differ from the benchmark scene");
+        }
+        const astrocfa::ReconstructionMetrics metrics =
+            astrocfa::measure_reconstruction(scene.truth, image, scene.cfa, scene.stars);
+        write_benchmark_row(candidate.name, metrics, std::cout);
+        rows.emplace_back(candidate.name, metrics);
+      }
+
+      if(!csv_path.empty()) {
+        ensure_parent_directory(csv_path);
+        std::ofstream csv(csv_path);
+        if(!csv) {
+          throw std::runtime_error("Cannot open benchmark CSV: " + csv_path);
+        }
+        write_benchmark_csv_header(csv);
+        for(const auto &[name, metrics] : rows) {
+          write_benchmark_csv_row(name, metrics, csv);
+        }
+        std::cout << "  csv: " << csv_path << "\n";
       }
     } catch(const std::exception &error) {
       std::cerr << "benchmark-debayer failed: " << error.what() << "\n";

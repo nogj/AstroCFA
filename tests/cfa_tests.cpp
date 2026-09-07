@@ -118,6 +118,24 @@ void noise_weighted_residual_uses_sensor_noise_scale() {
           "Same reconstruction error should matter less under a noisier model");
 }
 
+void quantization_preserves_metadata_and_sensor_codes() {
+  astrocfa::CfaFrame input(2, 1, astrocfa::BayerPattern{});
+  input.set_sample(0, 0,
+                   astrocfa::CfaSample{.value = 0.3F, .valid = false, .clipped = false});
+  input.set_sample(1, 0,
+                   astrocfa::CfaSample{.value = 1.2F, .valid = true, .clipped = true});
+
+  const astrocfa::CfaFrame quantized = astrocfa::quantize_cfa(input, 255U);
+  require_near(quantized.sample(0, 0), 77.0 / 255.0, 1e-7,
+               "CFA quantization should round to a sensor code");
+  require_near(quantized.sample(1, 0), 1.0, 0.0,
+               "CFA quantization should clamp to the maximum code");
+  require(!quantized.sample_info(0, 0).valid,
+          "CFA quantization should preserve validity");
+  require(quantized.sample_info(1, 0).clipped,
+          "CFA quantization should preserve clipping");
+}
+
 } // namespace
 
 int main() {
@@ -127,6 +145,7 @@ int main() {
     residual_detects_unsupported_rgb_change();
     residual_ignores_invalid_and_clipped_samples();
     noise_weighted_residual_uses_sensor_noise_scale();
+    quantization_preserves_metadata_and_sensor_codes();
   } catch(const std::exception &error) {
     std::cerr << "cfa_tests failed: " << error.what() << "\n";
     return 1;

@@ -156,6 +156,13 @@ error, aperture-flux error, FWHM error, elongation error, and remosaicing
 residual. This is the early guardrail for keeping
 AstroCFA's reconstruction work measurable rather than merely aesthetic.
 
+The benchmark can also export a standards-based linear CFA DNG fixture and score
+external linear RGB TIFF candidates through repeated `--external name=path`
+arguments. `--csv` writes the internal and external rows in one machine-readable
+table. The exported manifest and star catalogue record the exact test contract;
+see [benchmarks/EXTERNAL_DEBAYER.md](benchmarks/EXTERNAL_DEBAYER.md) for the
+RawTherapee and Siril comparison workflow.
+
 `benchmark-joint` compares demosaic-each-light-then-average with phase-aware CFA
 initialization, non-robust joint inversion, and robust joint inversion. It
 synthesizes known dithers, Poisson-Gaussian noise, optional per-frame seeing
