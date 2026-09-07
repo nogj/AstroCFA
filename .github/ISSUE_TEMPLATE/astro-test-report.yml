@@ -1,0 +1,56 @@
+name: AstroCFA alpha test report
+description: Report a camera, RAW, calibration, or reconstruction result from AstroCFA.
+title: "[alpha-test]: "
+labels: ["alpha-test"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing AstroCFA. Please include enough detail to make the result reproducible without sharing private data publicly.
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS, CPU, compiler/build source if known.
+      placeholder: Windows 11, GitHub Actions artifact, Intel/AMD/ARM
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera and RAW format
+      placeholder: Canon EOS R6 CR3, Nikon D750 NEF, Sony A7S ARW, DNG
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or GUI steps
+      description: Paste the exact astrocfa-nogui command or describe GUI steps.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Console output
+      description: Include inspection, calibration, residual, and chroma metrics.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: observation
+    attributes:
+      label: Visual or scientific observation
+      description: Mention artifacts, color shifts, zippering, false chroma, stars, flats, clipping, or anything suspicious.
+    validations:
+      required: true
+  - type: checkboxes
+    id: diagnostics
+    attributes:
+      label: Diagnostics generated
+      options:
+        - label: Alias-risk map
+        - label: Remosaic residual map
+        - label: TIFF output
+        - label: JPEG preview with astro stretch

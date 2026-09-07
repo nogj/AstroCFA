@@ -1,0 +1,63 @@
+# AstroCFA Roadmap
+
+## Milestone 0: Project Skeleton
+
+- CMake project.
+- Qt GUI entry point as `astrocfa`.
+- CLI entry point as `astrocfa-nogui`.
+- Architecture and product thesis.
+- Basic tests for help/version commands.
+
+## Milestone 1: RAW Inspection
+
+- Read RAW/DNG metadata through LibRaw.
+- Report dimensions, active area, black/white levels, CFA pattern, ISO,
+  exposure time, camera model, and clipping statistics.
+- Report saturated component topology before demosaicing for star-core handling.
+- Preserve orientation and CFA phase information.
+- Add synthetic fixtures for Bayer phase handling.
+
+## Milestone 2: Linear CFA Frame
+
+- Internal `CfaFrame` type with per-sample value and phase.
+- Black subtraction and white normalization.
+- Basic FITS/EXR export for linear CFA diagnostics.
+- Unit tests for RGGB/BGGR/GRBG/GBRG addressing.
+- Remosaicing residual for validating reconstructed RGB against measured CFA.
+
+## Milestone 3: Calibration Frames
+
+- Bias, dark, flat, and dark-flat application.
+- Hot/dead pixel detection.
+- Robust master frame creation.
+- Rejection maps for cosmic rays and unstable pixels.
+
+## Milestone 4: Registration And Integration
+
+- Star detection on CFA-safe luminance proxy.
+- Subpixel translation registration.
+- Weighted stacking with sigma or winsorized clipping.
+- CFA-aware drizzle accumulation.
+
+## Milestone 5: Baseline Reconstruction
+
+- RCD-style demosaic baseline for Bayer.
+- LMMSE-style noisy-frame mode.
+- Remosaicing residual metric.
+- Synthetic star-field test images with known ground truth.
+
+## Milestone 6: Faithful Astro Reconstruction
+
+- Tile-based inverse refinement initialized from baseline demosaic.
+- Poisson-Gaussian data fidelity.
+- Conservative chroma regularization.
+- Star-aware PSF preservation.
+- Chroma confidence and aliasing maps.
+
+## Milestone 7: Astro Development
+
+- Background gradient model.
+- PSF estimation.
+- Regularized Richardson-Lucy and Wiener deconvolution.
+- Photometric color calibration hooks.
+- Arcsinh and generalized hyperbolic stretch.

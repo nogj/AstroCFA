@@ -1,0 +1,10 @@
+{
+  "name": "astrocfa",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "libjpeg-turbo",
+    "libraw",
+    "qtbase",
+    "tiff"
+  ]
+}
