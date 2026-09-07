@@ -22,7 +22,7 @@ inline void print_cli_help(std::ostream &out, std::string_view executable) {
       << "  " << executable
       << " benchmark-debayer [--width n] [--height n] [--seed n] [--noise none|astro] [--export-prefix path]\n"
       << "  " << executable
-      << " stack <input-raw-or-dng>... [--cfa-drizzle] [--auto-register] [--scale 2] [--offset dx,dy]...\n\n"
+      << " stack <input-raw-or-dng>... [--joint-reconstruct] [--cfa-drizzle] [--auto-register] [--scale 1|2] [--offset dx,dy]... [--iterations n] [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [-o output.tif|jpg] [--export-confidence map.tif|jpg]\n\n"
       << "Initial modes:\n"
       << "  faithful-astro   Conservative reconstruction from measured CFA samples\n"
       << "  star-preserve    Preserve stellar PSF shape and color discipline\n"

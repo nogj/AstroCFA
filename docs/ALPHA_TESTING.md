@@ -27,6 +27,12 @@ astrocfa-nogui develop light.dng \
   --flat-dir flats/ \
   --method inverse-refine \
   -o calibrated.tif
+
+astrocfa-nogui stack light-01.dng light-02.dng light-03.dng \
+  --joint-reconstruct \
+  --offset 0,0 --offset 0.42,-0.18 --offset -0.31,0.27 \
+  -o joint-linear.tif \
+  --export-confidence joint-confidence.tif
 ```
 
 Good reports include:
@@ -41,6 +47,8 @@ Good reports include:
 - crops around undersampled stars, saturated stars, and flat-field defects.
 - whether `inverse-refine` improves or harms star color compared with
   `inverse-refine-no-star-guard` in `benchmark-debayer`.
+- for dithered sequences, initial/final CFA RMSE, robust outlier count, RGB
+  direct coverage, and whether the joint confidence map matches the dither pattern.
 
 Do not treat current output as color-managed final data. TIFF export is linear
 sensor RGB, and JPEG export is a preview path.

@@ -51,6 +51,7 @@ add_library(astrocfa_core
   src/drizzle.cpp
   src/frequency_cfa.cpp
   src/image_writer.cpp
+  src/joint_reconstruction.cpp
   src/luminance_proxy.cpp
   src/noise_model.cpp
   src/output_transform.cpp
@@ -168,6 +169,13 @@ add_executable(astrocfa_synthetic_benchmark_tests
 target_compile_features(astrocfa_synthetic_benchmark_tests PRIVATE cxx_std_23)
 target_link_libraries(astrocfa_synthetic_benchmark_tests PRIVATE astrocfa_core)
 
+add_executable(astrocfa_joint_reconstruction_tests
+  tests/joint_reconstruction_tests.cpp
+)
+
+target_compile_features(astrocfa_joint_reconstruction_tests PRIVATE cxx_std_23)
+target_link_libraries(astrocfa_joint_reconstruction_tests PRIVATE astrocfa_core)
+
 if(MSVC)
   target_compile_options(astrocfa_core PRIVATE /W4)
   target_compile_options(astrocfa-nogui PRIVATE /W4)
@@ -184,6 +192,7 @@ if(MSVC)
   target_compile_options(astrocfa_output_transform_tests PRIVATE /W4)
   target_compile_options(astrocfa_diagnostic_maps_tests PRIVATE /W4)
   target_compile_options(astrocfa_synthetic_benchmark_tests PRIVATE /W4)
+  target_compile_options(astrocfa_joint_reconstruction_tests PRIVATE /W4)
 else()
   target_compile_options(astrocfa_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa-nogui PRIVATE -Wall -Wextra -Wpedantic)
@@ -200,6 +209,7 @@ else()
   target_compile_options(astrocfa_output_transform_tests PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa_diagnostic_maps_tests PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa_synthetic_benchmark_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(astrocfa_joint_reconstruction_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 enable_testing()
@@ -220,3 +230,4 @@ add_test(NAME astrocfa_image_writer_tests COMMAND astrocfa_image_writer_tests)
 add_test(NAME astrocfa_output_transform_tests COMMAND astrocfa_output_transform_tests)
 add_test(NAME astrocfa_diagnostic_maps_tests COMMAND astrocfa_diagnostic_maps_tests)
 add_test(NAME astrocfa_synthetic_benchmark_tests COMMAND astrocfa_synthetic_benchmark_tests)
+add_test(NAME astrocfa_joint_reconstruction_tests COMMAND astrocfa_joint_reconstruction_tests)

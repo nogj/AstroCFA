@@ -238,6 +238,28 @@ frame weights. Coverage and accumulated weight are first-class outputs because
 they tell the reconstruction stage which colors/frequencies are measured and
 which remain inferred.
 
+## Joint Multi-Frame CFA Reconstruction
+
+The first joint solver estimates one RGB image from all calibrated lights rather
+than demosaicing and stacking each light independently. Its forward model samples
+the observed color channel from the common output grid at each frame's translated
+sensor coordinate. The residual is weighted by the Poisson-Gaussian noise model
+and a Huber influence function, then backprojected through the same bilinear
+kernel. This provides robust resistance to transient samples while retaining an
+auditable residual against every input measurement.
+
+Initialization combines phase-separated measurements on the common grid and
+uses the first frame's conservative reconstruction only to fill unconstrained
+locations. Chroma regularization is edge-aware and is forbidden from changing a
+channel wherever that output sample has direct CFA support. The solver exports
+normalized R/G/B support as a confidence image and reports coverage, outlier
+count, normalized error, and initial/final CFA RMSE.
+
+This is an initial translation-only operator. It does not yet claim a complete
+physical image-formation model: per-frame PSF convolution, lens distortion,
+photometric scale, background offsets, tiled execution, and uncertainty derived
+from the inverse Hessian remain to be implemented and benchmarked.
+
 ## Diagnostic Maps
 
 Every high-quality run should be able to emit:

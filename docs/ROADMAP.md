@@ -39,6 +39,8 @@
 - Subpixel translation registration.
 - Weighted stacking with sigma or winsorized clipping.
 - CFA-aware drizzle accumulation.
+- Robust joint CFA reconstruction from translated lights, with per-channel
+  confidence and transient rejection. Initial translation-only solver implemented.
 
 ## Milestone 5: Baseline Reconstruction
 

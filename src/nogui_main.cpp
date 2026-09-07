@@ -5,6 +5,7 @@
 #include "astrocfa/drizzle.hpp"
 #include "astrocfa/frequency_cfa.hpp"
 #include "astrocfa/image_writer.hpp"
+#include "astrocfa/joint_reconstruction.hpp"
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/output_transform.hpp"
 #include "astrocfa/raw_loader.hpp"
@@ -735,19 +736,53 @@ int main(int argc, char **argv) {
     std::vector<std::string> inputs;
     std::vector<astrocfa::SubpixelOffset> offsets;
     bool cfa_drizzle = false;
+    bool joint_reconstruct = false;
     bool auto_register = false;
     std::size_t scale = 2;
+    bool scale_explicit = false;
+    std::size_t iterations = 6;
+    std::string output_path;
+    std::string confidence_path;
+    CalibrationCliOptions calibration_options;
 
     for(int i = 2; i < argc; ++i) {
       const std::string arg = argv[i];
       if(arg == "--cfa-drizzle") {
         cfa_drizzle = true;
+      } else if(arg == "--joint-reconstruct") {
+        joint_reconstruct = true;
       } else if(arg == "--auto-register") {
         auto_register = true;
       } else if(arg == "--scale" && i + 1 < argc) {
         scale = static_cast<std::size_t>(std::stoul(argv[++i]));
+        scale_explicit = true;
+      } else if(arg == "--iterations" && i + 1 < argc) {
+        iterations = static_cast<std::size_t>(std::stoul(argv[++i]));
       } else if(arg == "--offset" && i + 1 < argc) {
         offsets.push_back(parse_offset(argv[++i]));
+      } else if((arg == "-o" || arg == "--output") && i + 1 < argc) {
+        output_path = argv[++i];
+      } else if(arg == "--export-confidence" && i + 1 < argc) {
+        confidence_path = argv[++i];
+      } else if(arg == "--bias" && i + 1 < argc) {
+        calibration_options.bias_path = argv[++i];
+      } else if(arg == "--dark" && i + 1 < argc) {
+        calibration_options.dark_path = argv[++i];
+      } else if(arg == "--flat" && i + 1 < argc) {
+        calibration_options.flat_path = argv[++i];
+      } else if(arg == "--bias-dir" && i + 1 < argc) {
+        calibration_options.bias_dir = argv[++i];
+      } else if(arg == "--dark-dir" && i + 1 < argc) {
+        calibration_options.dark_dir = argv[++i];
+      } else if(arg == "--flat-dir" && i + 1 < argc) {
+        calibration_options.flat_dir = argv[++i];
+      } else if(arg == "--dark-excludes-bias") {
+        calibration_options.options.dark_includes_bias = false;
+      } else if(arg == "--no-cosmetic-correction") {
+        calibration_options.options.cosmetic.enabled = false;
+      } else if(!arg.empty() && arg.front() == '-') {
+        std::cerr << "Unknown stack option: " << arg << "\n";
+        return 2;
       } else {
         inputs.push_back(arg);
       }
@@ -757,13 +792,42 @@ int main(int argc, char **argv) {
       std::cerr << "stack requires at least one input RAW/DNG path.\n";
       return 2;
     }
-    if(!cfa_drizzle) {
-      std::cout << "Only --cfa-drizzle stack mode is implemented at this stage.\n";
+    if(!cfa_drizzle && !joint_reconstruct) {
+      std::cout << "Choose --joint-reconstruct or --cfa-drizzle.\n";
       return 0;
+    }
+    if(scale == 0 || scale > 2) {
+      std::cerr << "stack --scale currently supports only 1 or 2.\n";
+      return 2;
+    }
+    if(offsets.size() > inputs.size()) {
+      std::cerr << "More --offset values were supplied than input frames.\n";
+      return 2;
+    }
+    if(!confidence_path.empty() && !joint_reconstruct) {
+      std::cerr << "--export-confidence requires --joint-reconstruct.\n";
+      return 2;
+    }
+    if(joint_reconstruct && !cfa_drizzle && !scale_explicit) {
+      scale = 1;
     }
 
     try {
-      const auto first = astrocfa::load_linear_cfa_file(inputs.front());
+      validate_calibration_cli_options(calibration_options);
+      const LoadedCalibration masters = load_calibration_masters(calibration_options);
+      std::vector<astrocfa::CfaFrame> calibrated_frames;
+      std::vector<astrocfa::CalibrationStats> calibration_stats;
+      calibrated_frames.reserve(inputs.size());
+      calibration_stats.reserve(inputs.size());
+      for(const std::string &path : inputs) {
+        const auto loaded = astrocfa::load_linear_cfa_file(path);
+        astrocfa::CalibrationResult calibrated =
+            apply_cli_calibration(loaded.cfa, calibration_options, masters);
+        calibration_stats.push_back(calibrated.stats);
+        calibrated_frames.push_back(std::move(calibrated.cfa));
+      }
+
+      const astrocfa::CfaFrame &first = calibrated_frames.front();
       std::vector<astrocfa::SubpixelOffset> effective_offsets(inputs.size(),
                                                               astrocfa::SubpixelOffset{});
       std::vector<astrocfa::RegistrationResult> registrations(inputs.size());
@@ -771,19 +835,12 @@ int main(int argc, char **argv) {
         effective_offsets[i] = offsets[i];
       }
 
-      astrocfa::CfaDrizzleAccumulator accumulator(
-          first.cfa.width(), first.cfa.height(), first.cfa.pattern(),
-          astrocfa::DrizzleOptions{.scale = scale, .drop_shrink = 0.7});
-      accumulator.add_frame(first.cfa, effective_offsets[0]);
-
       for(std::size_t i = 1; i < inputs.size(); ++i) {
-        const auto frame = astrocfa::load_linear_cfa_file(inputs[i]);
         if(auto_register && i >= offsets.size()) {
           registrations[i] =
-              astrocfa::estimate_integer_star_translation(first.cfa, frame.cfa);
+              astrocfa::estimate_integer_star_translation(first, calibrated_frames[i]);
           effective_offsets[i] = registrations[i].offset;
         }
-        accumulator.add_frame(frame.cfa, effective_offsets[i]);
       }
 
       const auto print_coverage = [](const char *name,
@@ -799,12 +856,10 @@ int main(int argc, char **argv) {
                   << ", max weight " << coverage.max_weight << "\n";
       };
 
-      std::cout << "AstroCFA CFA drizzle accumulation\n"
+      std::cout << "AstroCFA multi-frame CFA processing\n"
                 << "  frames: " << inputs.size() << "\n"
-                << "  input dimensions: " << first.cfa.width() << " x " << first.cfa.height()
+                << "  input dimensions: " << first.width() << " x " << first.height()
                 << "\n"
-                << "  output dimensions: " << accumulator.output_width() << " x "
-                << accumulator.output_height() << "\n"
                 << "  scale: " << scale << "\n"
                 << "  offsets: " << offsets.size() << " provided"
                 << (auto_register ? ", missing values estimated by CFA-safe star registration\n"
@@ -817,14 +872,72 @@ int main(int argc, char **argv) {
                     << " matched=" << registrations[i].matched_samples << "\n";
         }
       }
-      std::cout
-                << "  coverage by phase:\n";
-      print_coverage("R ", accumulator.coverage(astrocfa::CfaColor::red));
-      print_coverage("G1", accumulator.coverage(astrocfa::CfaColor::green1));
-      print_coverage("B ", accumulator.coverage(astrocfa::CfaColor::blue));
-      print_coverage("G2", accumulator.coverage(astrocfa::CfaColor::green2));
-      std::cout << "  note: no image export yet; this validates phase-separated "
-                   "drizzle accumulation.\n";
+      if(!calibration_options.bias_path.empty() || !calibration_options.dark_path.empty() ||
+         !calibration_options.flat_path.empty() || !calibration_options.bias_dir.empty() ||
+         !calibration_options.dark_dir.empty() || !calibration_options.flat_dir.empty()) {
+        write_loaded_master_report(masters, std::cout);
+        std::cout << "  first-frame calibration:\n";
+        write_calibration_report(calibration_stats.front(), std::cout);
+      }
+
+      if(cfa_drizzle) {
+        astrocfa::CfaDrizzleAccumulator accumulator(
+            first.width(), first.height(), first.pattern(),
+            astrocfa::DrizzleOptions{.scale = scale, .drop_shrink = 0.7});
+        for(std::size_t i = 0; i < calibrated_frames.size(); ++i) {
+          accumulator.add_frame(calibrated_frames[i], effective_offsets[i]);
+        }
+        std::cout << "  drizzle output dimensions: " << accumulator.output_width()
+                  << " x " << accumulator.output_height() << "\n"
+                  << "  drizzle coverage by phase:\n";
+        print_coverage("R ", accumulator.coverage(astrocfa::CfaColor::red));
+        print_coverage("G1", accumulator.coverage(astrocfa::CfaColor::green1));
+        print_coverage("B ", accumulator.coverage(astrocfa::CfaColor::blue));
+        print_coverage("G2", accumulator.coverage(astrocfa::CfaColor::green2));
+      }
+
+      if(joint_reconstruct) {
+        std::vector<astrocfa::JointCfaFrame> joint_frames;
+        joint_frames.reserve(calibrated_frames.size());
+        for(std::size_t i = 0; i < calibrated_frames.size(); ++i) {
+          joint_frames.push_back(astrocfa::JointCfaFrame{
+              .cfa = &calibrated_frames[i],
+              .offset = effective_offsets[i],
+          });
+        }
+        const astrocfa::JointReconstructionResult result =
+            astrocfa::reconstruct_joint_cfa(
+                joint_frames, astrocfa::JointReconstructionOptions{
+                                  .scale = scale,
+                                  .iterations = iterations,
+                              });
+        std::cout << "  joint output dimensions: " << result.image.width() << " x "
+                  << result.image.height() << "\n"
+                  << "  joint iterations: " << result.stats.iterations << "\n"
+                  << "  measurements: " << result.stats.measurements << "\n"
+                  << "  initial/final CFA RMSE: " << std::fixed
+                  << std::setprecision(8) << result.stats.initial_rmse << " / "
+                  << result.stats.final_rmse << "\n"
+                  << "  final normalized MAE: " << result.stats.final_normalized_mae
+                  << "\n"
+                  << "  robust outliers: " << result.stats.robust_outliers << "\n"
+                  << "  RGB direct coverage: " << std::setprecision(4)
+                  << result.stats.channel_coverage[0] * 100.0 << "% / "
+                  << result.stats.channel_coverage[1] * 100.0 << "% / "
+                  << result.stats.channel_coverage[2] * 100.0 << "%\n";
+        if(!output_path.empty()) {
+          astrocfa::write_rgb_image(
+              output_image_for_path(result.image, output_path, "astro"), output_path);
+          std::cout << "  output: " << output_path << "\n";
+        }
+        if(!confidence_path.empty()) {
+          astrocfa::write_rgb_image(result.confidence, confidence_path);
+          std::cout << "  confidence map: " << confidence_path << "\n";
+        }
+        if(output_path.empty()) {
+          std::cout << "  note: use -o result.tif to export the joint reconstruction.\n";
+        }
+      }
     } catch(const std::exception &error) {
       std::cerr << "stack failed: " << error.what() << "\n";
       return 1;

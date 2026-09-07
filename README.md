@@ -83,6 +83,9 @@ astrocfa-nogui calibrate light.dng --dark-dir darks/ --flat-dir flats/ \
 astrocfa-nogui stack light1.dng light2.dng light3.dng --cfa-drizzle --scale 2 \
   --offset 0,0 --offset 0.42,-0.18 --offset -0.31,0.27
 astrocfa-nogui stack light1.dng light2.dng light3.dng --cfa-drizzle --auto-register
+astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
+  --offset 0,0 --offset 0.42,-0.18 --offset -0.31,0.27 --iterations 6 \
+  -o joint-linear.tif --export-confidence joint-confidence.tif
 astrocfa-nogui develop input.dng --method bilinear-baseline -o baseline.tif
 astrocfa-nogui develop input.dng --method malvar-baseline -o malvar.tif
 astrocfa-nogui develop input.dng --method residual-interpolation -o ri.tif
@@ -124,6 +127,15 @@ median of valid, non-defective neighbors from the same Bayer phase before RGB
 reconstruction. The map remains available as a Qt overlay and through
 `--export-defect-map`; `--no-cosmetic-correction` preserves the uncorrected path.
 
+`stack --joint-reconstruct` solves one RGB scene directly from all calibrated
+CFA measurements and their supplied offsets. A phase-separated splat initializes
+the scene, then robust noise-weighted backprojection reduces the residual against
+every original light. Edge-aware chroma regularization is restricted to channels
+without direct CFA support. The current solver models translation and bilinear
+sampling; PSF convolution, distortion, tiled memory use, and subpixel star
+registration remain future work. Scale 1 is the memory-conscious default for
+joint reconstruction; scale 2 is available explicitly for dithered datasets.
+
 ## Status
 
 This repository is an early but runnable prototype. It includes RAW/DNG
@@ -131,7 +143,8 @@ inspection, normalized linear CFA loading, bias/dark/flat calibration against
 single master frames or robust in-memory masters built from directories,
 CFA-safe star diagnostics, phase-aware drizzle accumulation, several non-neural
 demosaic candidates, frequency-guided CFA risk analysis, inverse chroma
-refinement, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
+refinement, robust joint multi-frame CFA reconstruction, per-channel confidence
+maps, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
 GUI with real bias/dark/flat calibration, robust directory masters, and
 image/alias-risk/residual/sensor-defect overlays.
 
