@@ -1,4 +1,5 @@
 #include "astrocfa/cli.hpp"
+#include "astrocfa/background_model.hpp"
 #include "astrocfa/calibration.hpp"
 #include "astrocfa/diagnostic_maps.hpp"
 #include "astrocfa/demosaic.hpp"
@@ -475,7 +476,10 @@ int main(int argc, char **argv) {
       std::string alias_risk_path;
       std::string residual_map_path;
       std::string defect_map_path;
+      std::string background_map_path;
       std::string preview_stretch = "none";
+      std::string background_correction = "off";
+      astrocfa::BackgroundModelOptions background_options;
       std::string white_balance_mode = "auto";
       std::string output_space = "auto";
       std::array<double, 3> custom_white_balance = {1.0, 1.0, 1.0};
@@ -493,6 +497,14 @@ int main(int argc, char **argv) {
           preview_stretch = argv[++i];
         } else if(arg == "--jpeg-quality" && i + 1 < argc) {
           write_options.jpeg_quality = std::stoi(argv[++i]);
+        } else if(arg == "--background" && i + 1 < argc) {
+          background_correction = argv[++i];
+        } else if(arg == "--background-tile" && i + 1 < argc) {
+          background_options.tile_size =
+              static_cast<std::size_t>(std::stoul(argv[++i]));
+        } else if(arg == "--background-degree" && i + 1 < argc) {
+          background_options.polynomial_degree =
+              static_cast<std::size_t>(std::stoul(argv[++i]));
         } else if(arg == "--white-balance" && i + 1 < argc) {
           white_balance_mode = argv[++i];
         } else if(arg == "--wb-multipliers" && i + 1 < argc) {
@@ -534,6 +546,8 @@ int main(int argc, char **argv) {
           residual_map_path = argv[++i];
         } else if(arg == "--export-defect-map" && i + 1 < argc) {
           defect_map_path = argv[++i];
+        } else if(arg == "--export-background" && i + 1 < argc) {
+          background_map_path = argv[++i];
         } else {
           throw std::invalid_argument("Unknown develop option: " + arg);
         }
@@ -558,6 +572,16 @@ int main(int argc, char **argv) {
          output_space != "camera") {
         throw std::invalid_argument("Unsupported output space: " + output_space);
       }
+      if(background_correction != "off" &&
+         background_correction != "gradient" &&
+         background_correction != "neutral") {
+        throw std::invalid_argument("Unsupported background correction: " +
+                                    background_correction);
+      }
+      if(!background_map_path.empty() && background_correction == "off") {
+        throw std::invalid_argument(
+            "--export-background requires --background gradient or neutral");
+      }
       validate_calibration_cli_options(calibration_options);
 
       const auto frame = astrocfa::load_linear_cfa_file(argv[2]);
@@ -566,6 +590,12 @@ int main(int argc, char **argv) {
           apply_cli_calibration(frame.cfa, calibration_options, masters);
       astrocfa::DemosaicResult result =
           reconstruct_with_method(calibrated.cfa, method, inverse_options);
+      std::unique_ptr<astrocfa::BackgroundModelResult> background;
+      if(background_correction != "off") {
+        background_options.neutralize = background_correction == "neutral";
+        background = std::make_unique<astrocfa::BackgroundModelResult>(
+            astrocfa::model_astro_background(result.image, background_options));
+      }
       astrocfa::RawColorOptions color_options =
           astrocfa::automatic_raw_color_options(frame.inspection.color);
       if(custom_white_balance_set) {
@@ -582,7 +612,8 @@ int main(int argc, char **argv) {
         color_options.convert_to_srgb = output_space == "srgb";
       }
       const astrocfa::RawColorResult developed = astrocfa::apply_raw_color(
-          result.image, frame.inspection.color, color_options);
+          background ? background->corrected : result.image,
+          frame.inspection.color, color_options);
       std::cout << "AstroCFA reconstruction fidelity check\n"
                 << "  input: " << argv[2] << "\n"
                 << "  method: " << method << "\n"
@@ -618,6 +649,22 @@ int main(int argc, char **argv) {
                 << "  negative/out-of-range pixels: "
                 << developed.stats.negative_pixels << " / "
                 << developed.stats.over_range_pixels << "\n";
+      if(background) {
+        std::cout << "  background correction: " << background_correction << "\n"
+                  << "  background effective tile: "
+                  << background->stats.effective_tile_size << " px\n"
+                  << "  background tiles/downweighted: "
+                  << background->stats.tile_samples << " / "
+                  << background->stats.downweighted_samples << "\n"
+                  << "  background preserved RGB: ["
+                  << background->stats.preserved_level[0] << ", "
+                  << background->stats.preserved_level[1] << ", "
+                  << background->stats.preserved_level[2] << "]\n"
+                  << "  background gradient peak-to-peak RGB: ["
+                  << background->stats.gradient_peak_to_peak[0] << ", "
+                  << background->stats.gradient_peak_to_peak[1] << ", "
+                  << background->stats.gradient_peak_to_peak[2] << "]\n";
+      }
       if(!calibration_options.bias_path.empty() || !calibration_options.dark_path.empty() ||
          !calibration_options.flat_path.empty() || !calibration_options.bias_dir.empty() ||
          !calibration_options.dark_dir.empty() || !calibration_options.flat_dir.empty()) {
@@ -652,6 +699,16 @@ int main(int argc, char **argv) {
             astrocfa::make_sensor_defect_map(calibrated.defects), defect_map_path,
             write_options);
         std::cout << "  sensor defect map: " << defect_map_path << "\n";
+      }
+      if(!background_map_path.empty()) {
+        const astrocfa::RawColorResult developed_background =
+            astrocfa::apply_raw_color(background->background,
+                                      frame.inspection.color, color_options);
+        astrocfa::write_rgb_image(
+            output_image_for_path(developed_background.image,
+                                  background_map_path, "astro"),
+            background_map_path, write_options);
+        std::cout << "  background model: " << background_map_path << "\n";
       }
     } catch(const std::exception &error) {
       std::cerr << "develop failed: " << error.what() << "\n";

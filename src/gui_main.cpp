@@ -1,3 +1,4 @@
+#include "astrocfa/background_model.hpp"
 #include "astrocfa/calibration.hpp"
 #include "astrocfa/diagnostic_maps.hpp"
 #include "astrocfa/demosaic.hpp"
@@ -300,6 +301,7 @@ int main(int argc, char **argv) {
   auto *frequency_cfa = new QCheckBox("Frequency CFA");
   auto *white_balance = new QComboBox;
   auto *output_space = new QComboBox;
+  auto *background_correction = new QComboBox;
   linear_cfa->setToolTip("Load normalized CFA samples without demosaicing");
   star_candidates->setToolTip("Detect bright candidates on a CFA-safe luminance proxy");
   noise_model->setToolTip("Show the initial Poisson-Gaussian noise model");
@@ -320,6 +322,11 @@ int main(int argc, char **argv) {
   output_space->addItem("linear sRGB");
   output_space->addItem("camera RGB");
   output_space->setToolTip("Convert with the camera matrix or preserve sensor RGB");
+  background_correction->addItem("off");
+  background_correction->addItem("gradient");
+  background_correction->addItem("gradient + neutral");
+  background_correction->setToolTip(
+      "Fit a source-resistant additive sky surface in camera RGB");
   mode_layout->addWidget(new QLabel("Reconstruction"), 0, 0);
   mode_layout->addWidget(mode, 0, 1);
   mode_layout->addWidget(linear_cfa, 0, 2);
@@ -330,6 +337,8 @@ int main(int argc, char **argv) {
   mode_layout->addWidget(white_balance, 1, 1);
   mode_layout->addWidget(new QLabel("Output space"), 1, 2);
   mode_layout->addWidget(output_space, 1, 3);
+  mode_layout->addWidget(new QLabel("Background"), 1, 4);
+  mode_layout->addWidget(background_correction, 1, 5);
 
   auto *actions = new QWidget;
   auto *actions_layout = new QHBoxLayout(actions);
@@ -354,6 +363,7 @@ int main(int argc, char **argv) {
   overlay->addItem("alias risk");
   overlay->addItem("residual");
   overlay->addItem("sensor defects");
+  overlay->addItem("background model");
   overlay->setToolTip(
       "Sensor defects: hot red, dead blue, mixed magenta, invalid master yellow");
   auto *zoom = new QComboBox;
@@ -426,6 +436,7 @@ int main(int argc, char **argv) {
   auto alias_image = std::make_shared<QImage>();
   auto residual_image = std::make_shared<QImage>();
   auto defect_image = std::make_shared<QImage>();
+  auto background_image = std::make_shared<QImage>();
 
   const auto update_preview = [&]() {
     const QImage *selected = nullptr;
@@ -435,6 +446,8 @@ int main(int argc, char **argv) {
       selected = residual_image.get();
     } else if(overlay->currentText() == "sensor defects") {
       selected = defect_image.get();
+    } else if(overlay->currentText() == "background model") {
+      selected = background_image.get();
     } else {
       selected = preview_image.get();
     }
@@ -590,6 +603,16 @@ int main(int argc, char **argv) {
       const ReconstructionPreset reconstruction =
           reconstruct_for_preset(mode->currentText(), calibrated.cfa);
       const astrocfa::DemosaicResult &result = reconstruction.result;
+      std::unique_ptr<astrocfa::BackgroundModelResult> background;
+      if(background_correction->currentText() != "off") {
+        background = std::make_unique<astrocfa::BackgroundModelResult>(
+            astrocfa::model_astro_background(
+                result.image,
+                astrocfa::BackgroundModelOptions{
+                    .neutralize = background_correction->currentText() ==
+                                  "gradient + neutral",
+                }));
+      }
       astrocfa::RawColorOptions color_options =
           astrocfa::automatic_raw_color_options(frame.inspection.color);
       if(white_balance->currentText() == "as-shot") {
@@ -604,7 +627,8 @@ int main(int argc, char **argv) {
             output_space->currentText() == "linear sRGB";
       }
       const astrocfa::RawColorResult developed = astrocfa::apply_raw_color(
-          result.image, frame.inspection.color, color_options);
+          background ? background->corrected : result.image,
+          frame.inspection.color, color_options);
       std::ostringstream report;
       const astrocfa::DemosaicQuality quality =
           astrocfa::analyze_demosaic_quality(result.image, calibrated.cfa);
@@ -613,6 +637,15 @@ int main(int argc, char **argv) {
       *residual_image = to_qimage(
           astrocfa::make_remosaic_residual_map(calibrated.cfa, result.image));
       *defect_image = to_qimage(astrocfa::make_sensor_defect_map(calibrated.defects));
+      if(background) {
+        const astrocfa::RawColorResult developed_background =
+            astrocfa::apply_raw_color(background->background,
+                                      frame.inspection.color, color_options);
+        *background_image =
+            to_qimage(astrocfa::make_astro_preview(developed_background.image));
+      } else {
+        *background_image = QImage();
+      }
       update_preview();
       report << "AstroCFA calibrated reconstruction\n"
              << "  input: " << input_path->text().toStdString() << "\n"
@@ -658,6 +691,19 @@ int main(int argc, char **argv) {
              << "  negative/out-of-range pixels: "
              << developed.stats.negative_pixels << " / "
              << developed.stats.over_range_pixels << "\n";
+      if(background) {
+        report << "  background correction: "
+               << background_correction->currentText().toStdString() << "\n"
+               << "  background effective tile: "
+               << background->stats.effective_tile_size << " px\n"
+               << "  background tiles/downweighted: "
+               << background->stats.tile_samples << " / "
+               << background->stats.downweighted_samples << "\n"
+               << "  background gradient peak-to-peak RGB: "
+               << background->stats.gradient_peak_to_peak[0] << ", "
+               << background->stats.gradient_peak_to_peak[1] << ", "
+               << background->stats.gradient_peak_to_peak[2] << "\n";
+      }
       if(export_result && !output_path->text().isEmpty()) {
         const std::string path = output_path->text().toStdString();
         astrocfa::write_rgb_image(gui_output_image(developed.image, path), path);

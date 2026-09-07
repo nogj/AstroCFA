@@ -66,7 +66,9 @@
 
 ## Milestone 7: Astro Development
 
-- Background gradient model.
+- Source-resistant, robust polynomial background model with retained sky level,
+  optional neutralization, and diagnostic surface export. Implemented.
+- User masks and multiscale protection for fields dominated by extended signal.
 - Spatially varying/non-Gaussian PSF estimation.
 - Regularized Richardson-Lucy and Wiener deconvolution.
 - RAW as-shot/daylight/custom white balance and camera-to-linear-sRGB matrix

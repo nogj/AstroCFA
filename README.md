@@ -37,6 +37,7 @@ editing problems.
 - Poisson-Gaussian sensor noise modeling.
 - Star-aware chroma discipline around undersampled and saturated stars.
 - Explicit RAW white balance and camera-to-linear-sRGB color development.
+- Source-resistant additive background modeling with an auditable surface map.
 - Classical PSF deconvolution, with no learned priors.
 - Debug maps for clipping, residual, chroma confidence, aliasing, and noise.
 - Reproducible command-line processing with sidecar metadata.
@@ -104,6 +105,8 @@ astrocfa-nogui develop input.dng --method inverse-refine -o preview.jpg \
   --preview-stretch astro --export-alias-risk alias.tif --export-residual-map residual.tif
 astrocfa-nogui develop input.dng --method inverse-refine --white-balance daylight \
   --output-space srgb -o developed-linear-srgb.tif
+astrocfa-nogui develop input.dng --method inverse-refine --background gradient \
+  --export-background background.tif -o gradient-corrected.tif
 astrocfa-nogui develop input.dng --method inverse-refine \
   --wb-multipliers 2.1,1.0,1.4 --output-space camera -o developed-camera-rgb.tif
 astrocfa-nogui develop light.dng --bias master-bias.dng --dark master-dark.dng \
@@ -120,6 +123,13 @@ interpolation and iteratively regularizes chroma as an edge-aware field anchored
 to measured CFA samples. It preserves the measured channel at every pixel, so
 the remosaicing residual remains an explicit accountability check rather than a
 decorative metric.
+
+Background correction is deliberately opt-in. `--background gradient` fits an
+additive degree-2 surface from low-luminance samples in spatial tiles, then uses
+asymmetric robust weighting to suppress stars, halos, and positive extended
+signal. It removes only the modeled spatial variation and preserves the median
+sky level per channel. `--background neutral` additionally makes that retained
+level achromatic; `--export-background` exposes the fitted surface for review.
 
 Diagnostic maps can be exported alongside the image. The first maps are Bayer
 alias-risk and remosaicing residual. These are intentionally part of the core
@@ -186,7 +196,7 @@ refinement, robust joint multi-frame CFA reconstruction, per-channel confidence
 maps, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
 GUI with real bias/dark/flat calibration, robust directory masters, and
 image/alias-risk/residual/sensor-defect overlays, RAW white-balance selection,
-and camera-RGB or linear-sRGB output.
+camera-RGB or linear-sRGB output, and an optional protected background model.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).

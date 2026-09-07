@@ -43,6 +43,7 @@ else()
 endif()
 
 add_library(astrocfa_core
+  src/background_model.cpp
   src/calibration.cpp
   src/cfa.cpp
   src/connected_components.cpp
@@ -186,6 +187,13 @@ add_executable(astrocfa_raw_color_tests
 target_compile_features(astrocfa_raw_color_tests PRIVATE cxx_std_23)
 target_link_libraries(astrocfa_raw_color_tests PRIVATE astrocfa_core)
 
+add_executable(astrocfa_background_model_tests
+  tests/background_model_tests.cpp
+)
+
+target_compile_features(astrocfa_background_model_tests PRIVATE cxx_std_23)
+target_link_libraries(astrocfa_background_model_tests PRIVATE astrocfa_core)
+
 if(MSVC)
   target_compile_options(astrocfa_core PRIVATE /W4)
   target_compile_options(astrocfa-nogui PRIVATE /W4)
@@ -204,6 +212,7 @@ if(MSVC)
   target_compile_options(astrocfa_synthetic_benchmark_tests PRIVATE /W4)
   target_compile_options(astrocfa_joint_reconstruction_tests PRIVATE /W4)
   target_compile_options(astrocfa_raw_color_tests PRIVATE /W4)
+  target_compile_options(astrocfa_background_model_tests PRIVATE /W4)
 else()
   target_compile_options(astrocfa_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa-nogui PRIVATE -Wall -Wextra -Wpedantic)
@@ -222,6 +231,7 @@ else()
   target_compile_options(astrocfa_synthetic_benchmark_tests PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa_joint_reconstruction_tests PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa_raw_color_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(astrocfa_background_model_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 enable_testing()
@@ -244,3 +254,4 @@ add_test(NAME astrocfa_diagnostic_maps_tests COMMAND astrocfa_diagnostic_maps_te
 add_test(NAME astrocfa_synthetic_benchmark_tests COMMAND astrocfa_synthetic_benchmark_tests)
 add_test(NAME astrocfa_joint_reconstruction_tests COMMAND astrocfa_joint_reconstruction_tests)
 add_test(NAME astrocfa_raw_color_tests COMMAND astrocfa_raw_color_tests)
+add_test(NAME astrocfa_background_model_tests COMMAND astrocfa_background_model_tests)

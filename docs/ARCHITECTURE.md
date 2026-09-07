@@ -286,6 +286,31 @@ for auditability and a future spatial PSF field. The model does not yet cover
 non-Gaussian/spatially varying PSFs, lens distortion, photometric scale,
 background offsets, tiled execution, or inverse-Hessian uncertainty.
 
+## Protected Background Modeling
+
+Astro background correction operates on reconstructed linear camera RGB before
+white balance and color conversion. The image is divided into tiles and only a
+low-luminance quantile from each tile contributes to a representative RGB
+sample. This lower-envelope sampling reduces direct contamination from stars
+without blurring or resampling the science image. If a small image would provide
+too few samples, the tile size is reduced automatically until the requested
+polynomial is constrained.
+
+A degree-0, degree-1, or degree-2 spatial surface is fit independently to each
+camera channel while sharing robust weights derived from luminance residuals.
+Positive residuals are rejected more aggressively than negative residuals:
+stars, halos, and nebulosity should not pull the instrumental background upward.
+The fitted surface is subtracted additively and its median per-channel level is
+restored, preserving the sky pedestal unless neutralization is explicitly
+selected.
+
+The model reports tile counts, downweighted samples, robust residual scale,
+preserved RGB levels, and per-channel peak-to-peak gradients. It also returns
+the complete fitted surface as a diagnostic image. Correction is opt-in because
+no source mask can prove that a smooth structure is instrumental rather than
+astronomical. Future work should add user masks, multiscale segmentation, and
+comparison against dither-derived sky models.
+
 ## RAW Color Development
 
 Demosaicing produces linear camera RGB. Color development is a separate stage
