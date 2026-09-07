@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -27,6 +28,24 @@ std::string color_name(const astrocfa::RawInspection &inspection, int color) {
 
 std::string phase_name(const astrocfa::RawInspection &inspection, int color) {
   return "C" + std::to_string(color) + "/" + color_name(inspection, color);
+}
+
+std::array<double, 3> normalized_white_balance(const float multipliers[4],
+                                               bool &valid) {
+  std::array<double, 3> result = {multipliers[0], multipliers[1],
+                                  multipliers[2]};
+  valid = std::all_of(result.begin(), result.end(), [](double value) {
+    return std::isfinite(value) && value > 0.0;
+  });
+  if(valid) {
+    const double green = result[1];
+    for(double &value : result) {
+      value /= green;
+    }
+  } else {
+    result = {1.0, 1.0, 1.0};
+  }
+  return result;
 }
 
 } // namespace
@@ -73,6 +92,23 @@ RawInspection inspect_raw_file(const std::string &path) {
   out.exposure_seconds = other.shutter;
   out.aperture = other.aperture;
   out.focal_length = other.focal_len;
+  out.color.as_shot_white_balance = normalized_white_balance(
+      color.cam_mul, out.color.has_as_shot_white_balance);
+  out.color.daylight_white_balance = normalized_white_balance(
+      color.pre_mul, out.color.has_daylight_white_balance);
+  double matrix_energy = 0.0;
+  out.color.has_camera_to_srgb = true;
+  for(std::size_t row = 0; row < 3; ++row) {
+    for(std::size_t column = 0; column < 3; ++column) {
+      const double value = color.rgb_cam[row][column];
+      out.color.camera_to_srgb[row][column] = value;
+      out.color.has_camera_to_srgb =
+          out.color.has_camera_to_srgb && std::isfinite(value);
+      matrix_energy += std::abs(value);
+    }
+  }
+  out.color.has_camera_to_srgb =
+      out.color.has_camera_to_srgb && matrix_energy > 1.0e-9;
 
   for(std::size_t i = 0; i < out.cblack.size(); ++i) {
     out.cblack[i] = color.cblack[i];
@@ -226,6 +262,26 @@ void write_inspection_report(const RawInspection &inspection, std::ostream &out)
   out << "  - clipped phase counts identify saturated stars before demosaicing.\n";
   out << "  - per-phase means are useful for flat-field and CFA balance sanity checks.\n";
   out << "  - remosaicing residual maps will build on these same active-area coordinates.\n";
+
+  out << "\nRAW color metadata:\n"
+      << "  as-shot white balance: "
+      << (inspection.color.has_as_shot_white_balance ? "yes" : "no") << " ["
+      << inspection.color.as_shot_white_balance[0] << ", "
+      << inspection.color.as_shot_white_balance[1] << ", "
+      << inspection.color.as_shot_white_balance[2] << "]\n"
+      << "  daylight white balance: "
+      << (inspection.color.has_daylight_white_balance ? "yes" : "no") << " ["
+      << inspection.color.daylight_white_balance[0] << ", "
+      << inspection.color.daylight_white_balance[1] << ", "
+      << inspection.color.daylight_white_balance[2] << "]\n"
+      << "  camera-to-sRGB matrix: "
+      << (inspection.color.has_camera_to_srgb ? "yes" : "no") << "\n";
+  if(inspection.color.has_camera_to_srgb) {
+    for(const auto &row : inspection.color.camera_to_srgb) {
+      out << "    [" << row[0] << ", " << row[1] << ", " << row[2]
+          << "]\n";
+    }
+  }
 }
 
 } // namespace astrocfa

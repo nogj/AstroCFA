@@ -286,6 +286,28 @@ for auditability and a future spatial PSF field. The model does not yet cover
 non-Gaussian/spatially varying PSFs, lens distortion, photometric scale,
 background offsets, tiled execution, or inverse-Hessian uncertainty.
 
+## RAW Color Development
+
+Demosaicing produces linear camera RGB. Color development is a separate stage
+so white balance and output-space choices cannot alter remosaicing residuals or
+the reconstruction solver. AstroCFA reads LibRaw's as-shot and daylight channel
+multipliers plus its camera-to-sRGB matrix. White-balance multipliers are
+normalized around green and applied before the matrix.
+
+Automatic mode prefers as-shot metadata, then daylight metadata, then sensor
+unity. It applies the camera matrix only when a finite nonzero matrix is present.
+Explicit requests fail when their required metadata is absent instead of silently
+substituting a different color interpretation. A custom RGB multiplier path and
+camera-RGB output preserve reproducible alternatives for narrowband, modified
+cameras, and external profiling workflows.
+
+The transform remains scene-linear and does not clip internally. Negative and
+over-range pixels are counted in the development report. TIFF/JPEG encoding
+currently clamps to the integer output range; the arcsinh stretch and display
+gamma belong only to the JPEG/GUI preview path. ICC embedding, camera-profile
+interpolation, working spaces wider than sRGB, and photometric color calibration
+remain future work.
+
 ## Diagnostic Maps
 
 Every high-quality run should be able to emit:

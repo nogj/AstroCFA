@@ -36,6 +36,7 @@ editing problems.
 - Demosaicing refined by an explicit remosaicing residual.
 - Poisson-Gaussian sensor noise modeling.
 - Star-aware chroma discipline around undersampled and saturated stars.
+- Explicit RAW white balance and camera-to-linear-sRGB color development.
 - Classical PSF deconvolution, with no learned priors.
 - Debug maps for clipping, residual, chroma confidence, aliasing, and noise.
 - Reproducible command-line processing with sidecar metadata.
@@ -64,7 +65,9 @@ mode, previewing the reconstruction, switching diagnostic overlays, and exportin
 TIFF/JPEG output. A calibration selector accepts either one master RAW or a
 directory of RAW frames; directories are combined into a robust in-memory master.
 The `faithful-astro` preset uses inverse refinement, `star-preserve` increases its
-compact-star chroma guard, and `forensic` uses the frequency-guided path.
+compact-star chroma guard, and `forensic` uses the frequency-guided path. White
+balance and output-space selectors keep sensor RGB, as-shot/daylight metadata,
+and linear sRGB conversion explicit.
 
 `astrocfa-nogui` is the command-line executable for scripts, batch processing,
 and reproducible long-running workflows.
@@ -99,14 +102,20 @@ astrocfa-nogui develop input.dng --method residual-interpolation -o ri.tif
 astrocfa-nogui develop input.dng --method frequency-guided -o preview.jpg
 astrocfa-nogui develop input.dng --method inverse-refine -o preview.jpg \
   --preview-stretch astro --export-alias-risk alias.tif --export-residual-map residual.tif
+astrocfa-nogui develop input.dng --method inverse-refine --white-balance daylight \
+  --output-space srgb -o developed-linear-srgb.tif
+astrocfa-nogui develop input.dng --method inverse-refine \
+  --wb-multipliers 2.1,1.0,1.4 --output-space camera -o developed-camera-rgb.tif
 astrocfa-nogui develop light.dng --bias master-bias.dng --dark master-dark.dng \
   --flat master-flat.dng --method inverse-refine -o calibrated.tif \
   --export-defect-map sensor-defects.tif
 ```
 
 `develop` writes scene-linear 16-bit RGB TIFF output or an 8-bit JPEG preview.
-JPEG output can use an astro-oriented arcsinh preview stretch while TIFF remains
-linear. The `inverse-refine` method starts from frequency-guided residual
+Its default color mode uses as-shot WB and the camera-to-sRGB matrix when the RAW
+provides them, with explicit daylight, unity, custom-multiplier, and camera-RGB
+alternatives. JPEG output can use an astro-oriented arcsinh preview stretch while
+TIFF remains linear. The `inverse-refine` method starts from frequency-guided residual
 interpolation and iteratively regularizes chroma as an edge-aware field anchored
 to measured CFA samples. It preserves the measured channel at every pixel, so
 the remosaicing residual remains an explicit accountability check rather than a
@@ -176,7 +185,8 @@ demosaic candidates, frequency-guided CFA risk analysis, inverse chroma
 refinement, robust joint multi-frame CFA reconstruction, per-channel confidence
 maps, TIFF/JPEG export, diagnostic map export, and a minimal Qt preview
 GUI with real bias/dark/flat calibration, robust directory masters, and
-image/alias-risk/residual/sensor-defect overlays.
+image/alias-risk/residual/sensor-defect overlays, RAW white-balance selection,
+and camera-RGB or linear-sRGB output.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/ROADMAP.md](docs/ROADMAP.md).

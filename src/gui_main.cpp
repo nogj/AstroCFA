@@ -4,6 +4,7 @@
 #include "astrocfa/frequency_cfa.hpp"
 #include "astrocfa/image_writer.hpp"
 #include "astrocfa/output_transform.hpp"
+#include "astrocfa/raw_color.hpp"
 #include "astrocfa/raw_loader.hpp"
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/raw_inspector.hpp"
@@ -297,6 +298,8 @@ int main(int argc, char **argv) {
   auto *star_candidates = new QCheckBox("Star candidates");
   auto *noise_model = new QCheckBox("Noise model");
   auto *frequency_cfa = new QCheckBox("Frequency CFA");
+  auto *white_balance = new QComboBox;
+  auto *output_space = new QComboBox;
   linear_cfa->setToolTip("Load normalized CFA samples without demosaicing");
   star_candidates->setToolTip("Detect bright candidates on a CFA-safe luminance proxy");
   noise_model->setToolTip("Show the initial Poisson-Gaussian noise model");
@@ -308,12 +311,25 @@ int main(int argc, char **argv) {
   mode->addItem("frequency-guided");
   mode->addItem("malvar-baseline");
   mode->addItem("residual-interpolation");
+  white_balance->addItem("auto");
+  white_balance->addItem("as-shot");
+  white_balance->addItem("daylight");
+  white_balance->addItem("unity");
+  white_balance->setToolTip("Select RAW metadata or unity sensor balance");
+  output_space->addItem("auto");
+  output_space->addItem("linear sRGB");
+  output_space->addItem("camera RGB");
+  output_space->setToolTip("Convert with the camera matrix or preserve sensor RGB");
   mode_layout->addWidget(new QLabel("Reconstruction"), 0, 0);
   mode_layout->addWidget(mode, 0, 1);
   mode_layout->addWidget(linear_cfa, 0, 2);
   mode_layout->addWidget(star_candidates, 0, 3);
   mode_layout->addWidget(noise_model, 0, 4);
   mode_layout->addWidget(frequency_cfa, 0, 5);
+  mode_layout->addWidget(new QLabel("White balance"), 1, 0);
+  mode_layout->addWidget(white_balance, 1, 1);
+  mode_layout->addWidget(new QLabel("Output space"), 1, 2);
+  mode_layout->addWidget(output_space, 1, 3);
 
   auto *actions = new QWidget;
   auto *actions_layout = new QHBoxLayout(actions);
@@ -574,10 +590,25 @@ int main(int argc, char **argv) {
       const ReconstructionPreset reconstruction =
           reconstruct_for_preset(mode->currentText(), calibrated.cfa);
       const astrocfa::DemosaicResult &result = reconstruction.result;
+      astrocfa::RawColorOptions color_options =
+          astrocfa::automatic_raw_color_options(frame.inspection.color);
+      if(white_balance->currentText() == "as-shot") {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::as_shot;
+      } else if(white_balance->currentText() == "daylight") {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::daylight;
+      } else if(white_balance->currentText() == "unity") {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::unity;
+      }
+      if(output_space->currentText() != "auto") {
+        color_options.convert_to_srgb =
+            output_space->currentText() == "linear sRGB";
+      }
+      const astrocfa::RawColorResult developed = astrocfa::apply_raw_color(
+          result.image, frame.inspection.color, color_options);
       std::ostringstream report;
       const astrocfa::DemosaicQuality quality =
           astrocfa::analyze_demosaic_quality(result.image, calibrated.cfa);
-      *preview_image = to_qimage(astrocfa::make_astro_preview(result.image));
+      *preview_image = to_qimage(astrocfa::make_astro_preview(developed.image));
       *alias_image = to_qimage(astrocfa::make_frequency_alias_risk_map(calibrated.cfa));
       *residual_image = to_qimage(
           astrocfa::make_remosaic_residual_map(calibrated.cfa, result.image));
@@ -616,10 +647,20 @@ int main(int argc, char **argv) {
              << "  mean chroma roughness: " << quality.mean_chroma_roughness
              << "\n"
              << "  mean interpolated chroma: " << quality.mean_interpolated_chroma
-             << "\n";
+             << "\n"
+             << "  white balance: " << developed.stats.white_balance[0] << ", "
+             << developed.stats.white_balance[1] << ", "
+             << developed.stats.white_balance[2] << "\n"
+             << "  output color space: "
+             << (developed.stats.converted_to_srgb ? "linear sRGB"
+                                                   : "camera RGB")
+             << "\n"
+             << "  negative/out-of-range pixels: "
+             << developed.stats.negative_pixels << " / "
+             << developed.stats.over_range_pixels << "\n";
       if(export_result && !output_path->text().isEmpty()) {
         const std::string path = output_path->text().toStdString();
-        astrocfa::write_rgb_image(gui_output_image(result.image, path), path);
+        astrocfa::write_rgb_image(gui_output_image(developed.image, path), path);
         report << "  output: " << output_path->text().toStdString() << "\n";
       } else if(export_result) {
         report << "  note: no output path selected; choose one to write TIFF/JPEG.\n";

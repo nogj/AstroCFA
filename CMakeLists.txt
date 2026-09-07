@@ -57,6 +57,7 @@ add_library(astrocfa_core
   src/noise_model.cpp
   src/output_transform.cpp
   src/psf_estimator.cpp
+  src/raw_color.cpp
   src/raw_inspector.cpp
   src/raw_loader.cpp
   src/reconstruction_metrics.cpp
@@ -178,6 +179,13 @@ add_executable(astrocfa_joint_reconstruction_tests
 target_compile_features(astrocfa_joint_reconstruction_tests PRIVATE cxx_std_23)
 target_link_libraries(astrocfa_joint_reconstruction_tests PRIVATE astrocfa_core)
 
+add_executable(astrocfa_raw_color_tests
+  tests/raw_color_tests.cpp
+)
+
+target_compile_features(astrocfa_raw_color_tests PRIVATE cxx_std_23)
+target_link_libraries(astrocfa_raw_color_tests PRIVATE astrocfa_core)
+
 if(MSVC)
   target_compile_options(astrocfa_core PRIVATE /W4)
   target_compile_options(astrocfa-nogui PRIVATE /W4)
@@ -195,6 +203,7 @@ if(MSVC)
   target_compile_options(astrocfa_diagnostic_maps_tests PRIVATE /W4)
   target_compile_options(astrocfa_synthetic_benchmark_tests PRIVATE /W4)
   target_compile_options(astrocfa_joint_reconstruction_tests PRIVATE /W4)
+  target_compile_options(astrocfa_raw_color_tests PRIVATE /W4)
 else()
   target_compile_options(astrocfa_core PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa-nogui PRIVATE -Wall -Wextra -Wpedantic)
@@ -212,6 +221,7 @@ else()
   target_compile_options(astrocfa_diagnostic_maps_tests PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa_synthetic_benchmark_tests PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(astrocfa_joint_reconstruction_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(astrocfa_raw_color_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 enable_testing()
@@ -233,3 +243,4 @@ add_test(NAME astrocfa_output_transform_tests COMMAND astrocfa_output_transform_
 add_test(NAME astrocfa_diagnostic_maps_tests COMMAND astrocfa_diagnostic_maps_tests)
 add_test(NAME astrocfa_synthetic_benchmark_tests COMMAND astrocfa_synthetic_benchmark_tests)
 add_test(NAME astrocfa_joint_reconstruction_tests COMMAND astrocfa_joint_reconstruction_tests)
+add_test(NAME astrocfa_raw_color_tests COMMAND astrocfa_raw_color_tests)

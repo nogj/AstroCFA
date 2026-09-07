@@ -69,5 +69,8 @@
 - Background gradient model.
 - Spatially varying/non-Gaussian PSF estimation.
 - Regularized Richardson-Lucy and Wiener deconvolution.
+- RAW as-shot/daylight/custom white balance and camera-to-linear-sRGB matrix
+  conversion. Implemented.
+- ICC/DCP camera profiles and wide-gamut linear working spaces.
 - Photometric color calibration hooks.
 - Arcsinh and generalized hyperbolic stretch.

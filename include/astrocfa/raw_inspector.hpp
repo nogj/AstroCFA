@@ -1,5 +1,7 @@
 #pragma once
 
+#include "astrocfa/raw_color.hpp"
+
 #include <array>
 #include <cstdint>
 #include <ostream>
@@ -54,6 +56,7 @@ struct RawInspection {
   std::uint64_t largest_clipped_component = 0;
 
   double green_split_percent = 0.0;
+  RawColorMetadata color;
 };
 
 RawInspection inspect_raw_file(const std::string &path);

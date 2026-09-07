@@ -10,6 +10,7 @@
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/output_transform.hpp"
 #include "astrocfa/psf_estimator.hpp"
+#include "astrocfa/raw_color.hpp"
 #include "astrocfa/raw_loader.hpp"
 #include "astrocfa/raw_inspector.hpp"
 #include "astrocfa/reconstruction_metrics.hpp"
@@ -21,6 +22,7 @@
 #include <iomanip>
 #include <cctype>
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -29,6 +31,38 @@
 #include <vector>
 
 namespace {
+
+std::array<double, 3> parse_rgb_triplet(const std::string &text) {
+  std::array<double, 3> values{};
+  std::size_t start = 0;
+  for(std::size_t channel = 0; channel < values.size(); ++channel) {
+    const std::size_t comma = text.find(',', start);
+    if(channel < 2 && comma == std::string::npos) {
+      throw std::invalid_argument("RGB multipliers must use r,g,b format");
+    }
+    if(channel == 2 && comma != std::string::npos) {
+      throw std::invalid_argument("RGB multipliers must contain three values");
+    }
+    const std::size_t end = comma == std::string::npos ? text.size() : comma;
+    values[channel] = std::stod(text.substr(start, end - start));
+    start = end + 1U;
+  }
+  return values;
+}
+
+const char *white_balance_name(astrocfa::WhiteBalanceMode mode) {
+  switch(mode) {
+  case astrocfa::WhiteBalanceMode::as_shot:
+    return "as-shot";
+  case astrocfa::WhiteBalanceMode::daylight:
+    return "daylight";
+  case astrocfa::WhiteBalanceMode::unity:
+    return "unity";
+  case astrocfa::WhiteBalanceMode::custom:
+    return "custom";
+  }
+  return "unknown";
+}
 
 astrocfa::SubpixelOffset parse_offset(const std::string &text) {
   const std::size_t comma = text.find(',');
@@ -442,6 +476,10 @@ int main(int argc, char **argv) {
       std::string residual_map_path;
       std::string defect_map_path;
       std::string preview_stretch = "none";
+      std::string white_balance_mode = "auto";
+      std::string output_space = "auto";
+      std::array<double, 3> custom_white_balance = {1.0, 1.0, 1.0};
+      bool custom_white_balance_set = false;
       astrocfa::ImageWriteOptions write_options;
       astrocfa::InverseRefinementOptions inverse_options;
       CalibrationCliOptions calibration_options;
@@ -455,6 +493,13 @@ int main(int argc, char **argv) {
           preview_stretch = argv[++i];
         } else if(arg == "--jpeg-quality" && i + 1 < argc) {
           write_options.jpeg_quality = std::stoi(argv[++i]);
+        } else if(arg == "--white-balance" && i + 1 < argc) {
+          white_balance_mode = argv[++i];
+        } else if(arg == "--wb-multipliers" && i + 1 < argc) {
+          custom_white_balance = parse_rgb_triplet(argv[++i]);
+          custom_white_balance_set = true;
+        } else if(arg == "--output-space" && i + 1 < argc) {
+          output_space = argv[++i];
         } else if(arg == "--inverse-iterations" && i + 1 < argc) {
           inverse_options.iterations = std::stoi(argv[++i]);
         } else if(arg == "--chroma-smoothness" && i + 1 < argc) {
@@ -500,6 +545,19 @@ int main(int argc, char **argv) {
       if(preview_stretch != "none" && preview_stretch != "astro") {
         throw std::invalid_argument("Unsupported preview stretch: " + preview_stretch);
       }
+      if(white_balance_mode != "auto" && white_balance_mode != "as-shot" &&
+         white_balance_mode != "daylight" && white_balance_mode != "unity") {
+        throw std::invalid_argument("Unsupported white balance: " +
+                                    white_balance_mode);
+      }
+      if(custom_white_balance_set && white_balance_mode != "auto") {
+        throw std::invalid_argument(
+            "Use --white-balance or --wb-multipliers, not both");
+      }
+      if(output_space != "auto" && output_space != "srgb" &&
+         output_space != "camera") {
+        throw std::invalid_argument("Unsupported output space: " + output_space);
+      }
       validate_calibration_cli_options(calibration_options);
 
       const auto frame = astrocfa::load_linear_cfa_file(argv[2]);
@@ -508,6 +566,23 @@ int main(int argc, char **argv) {
           apply_cli_calibration(frame.cfa, calibration_options, masters);
       astrocfa::DemosaicResult result =
           reconstruct_with_method(calibrated.cfa, method, inverse_options);
+      astrocfa::RawColorOptions color_options =
+          astrocfa::automatic_raw_color_options(frame.inspection.color);
+      if(custom_white_balance_set) {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::custom;
+        color_options.custom_white_balance = custom_white_balance;
+      } else if(white_balance_mode == "as-shot") {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::as_shot;
+      } else if(white_balance_mode == "daylight") {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::daylight;
+      } else if(white_balance_mode == "unity") {
+        color_options.white_balance = astrocfa::WhiteBalanceMode::unity;
+      }
+      if(output_space != "auto") {
+        color_options.convert_to_srgb = output_space == "srgb";
+      }
+      const astrocfa::RawColorResult developed = astrocfa::apply_raw_color(
+          result.image, frame.inspection.color, color_options);
       std::cout << "AstroCFA reconstruction fidelity check\n"
                 << "  input: " << argv[2] << "\n"
                 << "  method: " << method << "\n"
@@ -530,7 +605,19 @@ int main(int argc, char **argv) {
       std::cout << quality.mean_chroma_roughness
                 << "\n"
                 << "  mean interpolated chroma: " << quality.mean_interpolated_chroma
-                << "\n";
+                << "\n"
+                << "  white balance: "
+                << white_balance_name(color_options.white_balance) << " ["
+                << developed.stats.white_balance[0] << ", "
+                << developed.stats.white_balance[1] << ", "
+                << developed.stats.white_balance[2] << "]\n"
+                << "  output color space: "
+                << (developed.stats.converted_to_srgb ? "linear sRGB"
+                                                      : "camera RGB")
+                << "\n"
+                << "  negative/out-of-range pixels: "
+                << developed.stats.negative_pixels << " / "
+                << developed.stats.over_range_pixels << "\n";
       if(!calibration_options.bias_path.empty() || !calibration_options.dark_path.empty() ||
          !calibration_options.flat_path.empty() || !calibration_options.bias_dir.empty() ||
          !calibration_options.dark_dir.empty() || !calibration_options.flat_dir.empty()) {
@@ -539,7 +626,7 @@ int main(int argc, char **argv) {
       }
       if(!output_path.empty()) {
         astrocfa::write_rgb_image(
-            output_image_for_path(result.image, output_path, preview_stretch),
+            output_image_for_path(developed.image, output_path, preview_stretch),
             output_path, write_options);
         std::cout << "  output: " << output_path << "\n";
         if(preview_stretch == "astro") {

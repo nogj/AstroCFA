@@ -26,6 +26,12 @@ astrocfa-nogui develop light.dng \
   --export-residual-map residual.tif
 
 astrocfa-nogui develop light.dng \
+  --method inverse-refine \
+  --white-balance daylight \
+  --output-space srgb \
+  -o daylight-linear-srgb.tif
+
+astrocfa-nogui develop light.dng \
   --bias-dir bias/ \
   --dark-dir darks/ \
   --flat-dir flats/ \
@@ -58,6 +64,7 @@ Good reports include:
 - crops around undersampled stars, saturated stars, and flat-field defects.
 - whether `inverse-refine` improves or harms star color compared with
   `inverse-refine-no-star-guard` in `benchmark-debayer`.
+- selected WB multipliers, output color space, and negative/out-of-range counts.
 - for dithered sequences, initial/final CFA RMSE, robust outlier count, RGB
   direct coverage, and whether the joint confidence map matches the dither pattern.
 - for variable-seeing sequences, estimated FWHM/star counts per light, relative
