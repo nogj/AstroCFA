@@ -47,7 +47,7 @@ void reads_linear_rgb_tiff_round_trip() {
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() / "astrocfa-linear-rgb-roundtrip.tif";
   astrocfa::write_rgb_tiff16(expected, path.string());
-  const astrocfa::RgbImage actual = astrocfa::read_linear_rgb_tiff(path.string());
+  const astrocfa::RgbImage actual = astrocfa::read_rgb_tiff(path.string());
 
   require(actual.width() == expected.width() && actual.height() == expected.height(),
           "TIFF round-trip dimensions");
@@ -58,6 +58,21 @@ void reads_linear_rgb_tiff_round_trip() {
           "TIFF reader should preserve linear green");
   require(std::abs(pixel.b - 0.5F) < 2.0F / 65535.0F,
           "TIFF reader should preserve linear blue");
+  std::filesystem::remove(path);
+}
+
+void decodes_srgb_candidate_to_linear() {
+  astrocfa::RgbImage encoded(1, 1);
+  encoded.set_pixel(0, 0, {.r = 0.73535698F, .g = 0.53709873F, .b = 0.34919021F});
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "astrocfa-srgb-candidate.tif";
+  astrocfa::write_rgb_tiff16(encoded, path.string());
+  const astrocfa::RgbPixel linear =
+      astrocfa::read_rgb_tiff(path.string(), astrocfa::RgbTransfer::srgb).pixel(0, 0);
+
+  require(std::abs(linear.r - 0.5F) < 3e-5F, "sRGB red decode");
+  require(std::abs(linear.g - 0.25F) < 3e-5F, "sRGB green decode");
+  require(std::abs(linear.b - 0.1F) < 3e-5F, "sRGB blue decode");
   std::filesystem::remove(path);
 }
 
@@ -93,6 +108,7 @@ int main() {
   try {
     writes_tiff_and_jpeg();
     reads_linear_rgb_tiff_round_trip();
+    decodes_srgb_candidate_to_linear();
     writes_loadable_linear_cfa_dng();
   } catch(const std::exception &error) {
     std::cerr << "image_writer_tests failed: " << error.what() << "\n";

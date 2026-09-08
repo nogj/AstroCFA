@@ -20,7 +20,7 @@ inline void print_cli_help(std::ostream &out, std::string_view executable) {
       << "  " << executable
       << " calibrate <input-raw-or-dng> [--bias master.dng|--bias-dir dir] [--dark master.dng|--dark-dir dir] [--flat master.dng|--flat-dir dir] [--dark-excludes-bias] [--no-cosmetic-correction] [--export-defect-map map.tif|jpg] [-o output.tif|jpg] [--method inverse-refine]\n"
       << "  " << executable
-      << " benchmark-debayer [--width n] [--height n] [--seed n] [--noise none|astro] [--export-prefix path] [--external name=linear-rgb.tif]... [--csv results.csv]\n"
+      << " benchmark-debayer [--width n] [--height n] [--seed n] [--noise none|astro] [--export-prefix path] [--external name=linear-rgb.tif]... [--external-srgb name=srgb-rgb.tif]... [--csv results.csv]\n"
       << "  " << executable
       << " benchmark-joint [--width n] [--height n] [--frames n] [--iterations n] [--seed n] [--noise none|astro] [--seeing fixed|variable] [--transients n] [--luma-smoothness v] [--chroma-smoothness v] [--export-prefix path]\n"
       << "  " << executable

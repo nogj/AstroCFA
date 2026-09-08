@@ -336,7 +336,7 @@ void write_benchmark_fixture_metadata(
            << "  \"input\": \"" << base << "-input.dng\",\n"
            << "  \"truth\": \"" << base << "-truth.tif\",\n"
            << "  \"stars\": \"" << base << "-stars.csv\",\n"
-           << "  \"candidate_contract\": \"top-left linear camera RGB, unity white balance, no color transform, no tone curve, same dimensions\"\n"
+           << "  \"candidate_contract\": \"top-left camera RGB, unity white balance, no color transform or tone curve, same dimensions; linear for --external or standard sRGB transfer for --external-srgb\"\n"
            << "}\n";
 }
 
@@ -359,14 +359,18 @@ void write_benchmark_row(const std::string &method,
 struct ExternalBenchmarkCandidate {
   std::string name;
   std::string path;
+  astrocfa::RgbTransfer transfer = astrocfa::RgbTransfer::linear;
 };
 
-ExternalBenchmarkCandidate parse_external_candidate(const std::string &text) {
+ExternalBenchmarkCandidate parse_external_candidate(
+    const std::string &text, astrocfa::RgbTransfer transfer) {
   const std::size_t equals = text.find('=');
   if(equals == std::string::npos || equals == 0 || equals + 1U >= text.size()) {
     throw std::invalid_argument("External candidate must use name=linear-rgb.tif format");
   }
-  return {.name = text.substr(0, equals), .path = text.substr(equals + 1U)};
+  return {.name = text.substr(0, equals),
+          .path = text.substr(equals + 1U),
+          .transfer = transfer};
 }
 
 std::string csv_field(const std::string &value) {
@@ -382,16 +386,21 @@ std::string csv_field(const std::string &value) {
 }
 
 void write_benchmark_csv_header(std::ostream &out) {
-  out << "method,rgb_mae,rgb_rmse,max_abs_error,chroma_mae,star_false_color,"
+  out << "astrocfa_version,width,height,seed,noise,method,input_transfer,"
+         "rgb_mae,rgb_rmse,max_abs_error,chroma_mae,star_false_color,"
          "star_luma_rmse,star_flux_relative_error,star_flux_relative_bias,"
          "star_fwhm_relative_error,star_elongation_error,cfa_residual_mae,"
          "rgb_samples,star_samples,measured_stars\n";
 }
 
-void write_benchmark_csv_row(const std::string &method,
+void write_benchmark_csv_row(const astrocfa::SyntheticAstroSceneOptions &options,
+                             const std::string &method, const std::string &transfer,
                              const astrocfa::ReconstructionMetrics &metrics,
                              std::ostream &out) {
-  out << csv_field(method) << std::setprecision(12) << ',' << metrics.rgb_mae << ','
+  out << astrocfa::version << ',' << options.width << ',' << options.height << ','
+      << options.seed << ',' << (options.add_noise ? "astro" : "none") << ','
+      << csv_field(method) << ',' << transfer << std::setprecision(12) << ','
+      << metrics.rgb_mae << ','
       << metrics.rgb_rmse << ',' << metrics.max_abs_error << ',' << metrics.chroma_mae
       << ',' << metrics.star_false_color << ',' << metrics.star_luma_rmse << ','
       << metrics.star_flux_relative_error << ',' << metrics.star_flux_relative_bias
@@ -399,6 +408,12 @@ void write_benchmark_csv_row(const std::string &method,
       << ',' << metrics.cfa_residual_mae << ',' << metrics.samples << ','
       << metrics.star_samples << ',' << metrics.measured_stars << '\n';
 }
+
+struct DebayerBenchmarkRow {
+  std::string name;
+  std::string input_transfer;
+  astrocfa::ReconstructionMetrics metrics;
+};
 
 void write_multiframe_benchmark_row(
     const astrocfa::MultiframeBenchmarkMethod &method, std::ostream &out) {
@@ -1028,7 +1043,11 @@ int main(int argc, char **argv) {
         } else if(arg == "--export-prefix" && i + 1 < argc) {
           export_prefix = argv[++i];
         } else if(arg == "--external" && i + 1 < argc) {
-          external_candidates.push_back(parse_external_candidate(argv[++i]));
+          external_candidates.push_back(parse_external_candidate(
+              argv[++i], astrocfa::RgbTransfer::linear));
+        } else if(arg == "--external-srgb" && i + 1 < argc) {
+          external_candidates.push_back(parse_external_candidate(
+              argv[++i], astrocfa::RgbTransfer::srgb));
         } else if(arg == "--csv" && i + 1 < argc) {
           csv_path = argv[++i];
         } else {
@@ -1073,7 +1092,7 @@ int main(int argc, char **argv) {
                   << "  fixture manifest: " << export_prefix << "-manifest.json\n";
       }
 
-      std::vector<std::pair<std::string, astrocfa::ReconstructionMetrics>> rows;
+      std::vector<DebayerBenchmarkRow> rows;
 
       for(const std::string &method : methods) {
         astrocfa::InverseRefinementOptions inverse_options;
@@ -1090,7 +1109,7 @@ int main(int argc, char **argv) {
             astrocfa::measure_reconstruction(scene.truth, result.image, scene.cfa,
                                              scene.stars);
         write_benchmark_row(method, metrics, std::cout);
-        rows.emplace_back(method, metrics);
+        rows.push_back({.name = method, .input_transfer = "linear", .metrics = metrics});
 
         if(!export_prefix.empty()) {
           astrocfa::write_rgb_image(
@@ -1100,7 +1119,8 @@ int main(int argc, char **argv) {
       }
 
       for(const ExternalBenchmarkCandidate &candidate : external_candidates) {
-        const astrocfa::RgbImage image = astrocfa::read_linear_rgb_tiff(candidate.path);
+        const astrocfa::RgbImage image =
+            astrocfa::read_rgb_tiff(candidate.path, candidate.transfer);
         if(image.width() != scene.truth.width() ||
            image.height() != scene.truth.height()) {
           throw std::invalid_argument("External candidate '" + candidate.name +
@@ -1108,8 +1128,12 @@ int main(int argc, char **argv) {
         }
         const astrocfa::ReconstructionMetrics metrics =
             astrocfa::measure_reconstruction(scene.truth, image, scene.cfa, scene.stars);
-        write_benchmark_row(candidate.name, metrics, std::cout);
-        rows.emplace_back(candidate.name, metrics);
+        const bool srgb = candidate.transfer == astrocfa::RgbTransfer::srgb;
+        write_benchmark_row(candidate.name + (srgb ? " [sRGB decoded]" : ""),
+                            metrics, std::cout);
+        rows.push_back({.name = candidate.name,
+                        .input_transfer = srgb ? "srgb-decoded" : "linear",
+                        .metrics = metrics});
       }
 
       if(!csv_path.empty()) {
@@ -1119,8 +1143,9 @@ int main(int argc, char **argv) {
           throw std::runtime_error("Cannot open benchmark CSV: " + csv_path);
         }
         write_benchmark_csv_header(csv);
-        for(const auto &[name, metrics] : rows) {
-          write_benchmark_csv_row(name, metrics, csv);
+        for(const DebayerBenchmarkRow &row : rows) {
+          write_benchmark_csv_row(scene_options, row.name, row.input_transfer,
+                                  row.metrics, csv);
         }
         std::cout << "  csv: " << csv_path << "\n";
       }

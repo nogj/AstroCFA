@@ -18,11 +18,18 @@ float normalized_integer(Sample value) {
          static_cast<float>(std::numeric_limits<Sample>::max());
 }
 
+float decode_srgb(float value) {
+  if(value <= 0.04045F) {
+    return value / 12.92F;
+  }
+  return std::pow((value + 0.055F) / 1.055F, 2.4F);
+}
+
 } // namespace
 
 namespace astrocfa {
 
-RgbImage read_linear_rgb_tiff(const std::string &path) {
+RgbImage read_rgb_tiff(const std::string &path, RgbTransfer transfer) {
   TIFF *tiff = TIFFOpen(path.c_str(), "r");
   if(tiff == nullptr) {
     throw std::runtime_error("Cannot open candidate TIFF: " + path);
@@ -87,7 +94,11 @@ RgbImage read_linear_rgb_tiff(const std::string &path) {
          pixel.g < 0.0F || pixel.g > 1.0F || pixel.b < 0.0F || pixel.b > 1.0F) {
         TIFFClose(tiff);
         throw std::invalid_argument(
-            "Candidate TIFF contains non-finite or out-of-range linear RGB samples");
+            "Candidate TIFF contains non-finite or out-of-range RGB samples");
+      }
+      if(transfer == RgbTransfer::srgb) {
+        pixel = {.r = decode_srgb(pixel.r), .g = decode_srgb(pixel.g),
+                 .b = decode_srgb(pixel.b)};
       }
       image.set_pixel(x, y, pixel);
     }

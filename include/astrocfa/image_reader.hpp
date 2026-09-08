@@ -6,6 +6,12 @@
 
 namespace astrocfa {
 
-[[nodiscard]] RgbImage read_linear_rgb_tiff(const std::string &path);
+enum class RgbTransfer {
+  linear,
+  srgb,
+};
+
+[[nodiscard]] RgbImage read_rgb_tiff(const std::string &path,
+                                     RgbTransfer transfer = RgbTransfer::linear);
 
 } // namespace astrocfa

@@ -1,0 +1,43 @@
+[Version]
+AppVersion=5.13
+
+[Exposure]
+Auto=false
+Compensation=0
+Brightness=0
+Contrast=0
+Saturation=0
+Black=0
+HighlightCompr=0
+HighlightComprThreshold=0
+HistogramMatching=false
+CurveFromHistogramMatching=false
+ClampOOG=false
+Curve=0;
+Curve2=0;
+
+[HLRecovery]
+Enabled=false
+
+[White Balance]
+Enabled=true
+Setting=Camera
+
+[Color Management]
+InputProfile=(none)
+ToneCurve=false
+ApplyLookTable=false
+ApplyBaselineExposureOffset=false
+ApplyHueSatMap=false
+WorkingProfile=sRGB
+WorkingTRC=none
+OutputProfile=RTv4_sRGB
+OutputProfileIntent=Relative
+OutputBPC=true
+
+[RAW]
+CA=false
+
+[RAW Bayer]
+Method=lmmse
+Border=0

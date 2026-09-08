@@ -28,7 +28,9 @@ compatibility.
 ## 2. Run An External Demosaicer
 
 The candidate output must be a top-left, full-size RGB TIFF with unsigned 8/16-bit
-or float32 samples. Values must be finite and in `[0, 1]`. For a valid comparison:
+or float32 samples. Values must be finite and in `[0, 1]`. `--external` expects
+linear samples. `--external-srgb` explicitly decodes the standard sRGB transfer
+function before measuring. For a valid comparison:
 
 - keep the image scene-linear;
 - use unity white balance;
@@ -38,19 +40,23 @@ or float32 samples. Values must be finite and in `[0, 1]`. For a valid compariso
 
 RawTherapee can be automated with a versioned neutral `.pp3` profile. In that
 profile select the demosaicing method under Bayer Sensor, use unity white balance,
-select `No profile` as the input profile, choose a linear-gamma output, and disable
-the remaining processing modules. Save separate profiles for RCD, AMaZE, LMMSE,
-and any other candidate, then run for example:
+select `No profile` as the input profile, and disable the remaining processing
+modules. RawTherapee 5.13 exports its normal TIFF through the selected sRGB output
+profile, so the checked-in 5.13 profiles are scored with `--external-srgb`. Save
+separate profiles for RCD, AMaZE, LMMSE, and any other candidate, then run for example:
 
 ```bash
 rawtherapee-cli -o benchmark/rt-rcd.tif \
-  -p benchmarks/profiles/rawtherapee-rcd-linear.pp3 \
+  -p benchmarks/profiles/rawtherapee-5.13-rcd-srgb.pp3 \
   -b16 -tz -Y -c benchmark/scene-007-input.dng
 ```
 
 Processing-profile keys change between RawTherapee releases, so commit the actual
 profile together with its `rawtherapee-cli --version` output. Do not treat a
 profile made for an untested release as equivalent.
+
+The first checked-in RawTherapee 5.13 measurements and their limitations are in
+[RESULTS.md](RESULTS.md).
 
 Siril can import and debayer the DNG through `convertraw ... -debayer`. Export the
 result as a linear TIFF without color calibration or stretching before scoring.
@@ -64,8 +70,8 @@ fixture manifest:
 ```bash
 astrocfa-nogui benchmark-debayer \
   --width 512 --height 384 --seed 7 --noise astro \
-  --external rawtherapee-rcd=benchmark/rt-rcd.tif \
-  --external rawtherapee-amaze=benchmark/rt-amaze.tif \
+  --external-srgb rawtherapee-rcd=benchmark/rt-rcd.tif \
+  --external-srgb rawtherapee-amaze=benchmark/rt-amaze.tif \
   --external siril=benchmark/siril.tif \
   --csv benchmark/results.csv
 ```

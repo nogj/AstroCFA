@@ -14,7 +14,8 @@ astrocfa-nogui benchmark-debayer --export-prefix benchmark/scene
 astrocfa-nogui benchmark-debayer --width 512 --height 384 --seed 7 \
   --export-prefix benchmark/scene-007
 astrocfa-nogui benchmark-debayer --width 512 --height 384 --seed 7 \
-  --external external-rcd=benchmark/rt-rcd.tif --csv benchmark/results.csv
+  --external-srgb rawtherapee-rcd=benchmark/rt-rcd.tif \
+  --csv benchmark/results.csv
 
 astrocfa-nogui benchmark-joint --export-prefix benchmark/joint
 
