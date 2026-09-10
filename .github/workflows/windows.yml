@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Windows MSVC x64
@@ -13,10 +16,11 @@ jobs:
     env:
       VCPKG_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-cache,readwrite
 
     steps:
       - name: Check out sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Bootstrap vcpkg if needed
         shell: pwsh
@@ -28,17 +32,23 @@ jobs:
             "Using vcpkg at $env:VCPKG_ROOT"
           }
 
-      - name: Cache vcpkg artifacts
-        uses: actions/cache@v4
+      - name: Cache vcpkg downloads and binaries
+        uses: actions/cache@v5
         with:
           path: |
-            ${{ env.VCPKG_ROOT }}\buildtrees
             ${{ env.VCPKG_ROOT }}\downloads
-            ${{ env.VCPKG_ROOT }}\installed
-            ${{ env.VCPKG_ROOT }}\packages
-          key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json') }}
+            ${{ github.workspace }}\vcpkg-cache
+          key: vcpkg-windows-x64-v2-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-windows-x64-
+            vcpkg-windows-x64-v2-
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install `
+            --triplet x64-windows `
+            --x-manifest-root="$env:GITHUB_WORKSPACE" `
+            --x-install-root="$env:GITHUB_WORKSPACE\build\vcpkg_installed"
 
       - name: Configure
         shell: pwsh
@@ -48,6 +58,8 @@ jobs:
           -A x64
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
           -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DVCPKG_INSTALLED_DIR="$env:GITHUB_WORKSPACE\build\vcpkg_installed"
+          -DVCPKG_MANIFEST_INSTALL=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel

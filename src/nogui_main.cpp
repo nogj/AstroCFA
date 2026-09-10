@@ -9,6 +9,7 @@
 #include "astrocfa/image_writer.hpp"
 #include "astrocfa/joint_reconstruction.hpp"
 #include "astrocfa/multiframe_benchmark.hpp"
+#include "astrocfa/morphological_reconstruction.hpp"
 #include "astrocfa/noise_model.hpp"
 #include "astrocfa/output_transform.hpp"
 #include "astrocfa/psf_estimator.hpp"
@@ -79,31 +80,48 @@ astrocfa::SubpixelOffset parse_offset(const std::string &text) {
   };
 }
 
-bool is_supported_demosaic_method(const std::string &method) {
-  return method == "bilinear-baseline" || method == "malvar-baseline" ||
-         method == "residual-interpolation" || method == "frequency-guided" ||
-         method == "inverse-refine";
-}
-
 astrocfa::DemosaicResult reconstruct_with_method(const astrocfa::CfaFrame &cfa,
                                                  const std::string &method,
                                                  astrocfa::InverseRefinementOptions
-                                                     inverse_options) {
+                                                     inverse_options,
+                                                 astrocfa::NoiseModel noise_model = {}) {
   if(method == "bilinear-baseline") {
-    return astrocfa::reconstruct_baseline(cfa, astrocfa::NoiseModel{});
+    return astrocfa::reconstruct_baseline(cfa, noise_model);
   }
   if(method == "malvar-baseline") {
-    return astrocfa::reconstruct_malvar_baseline(cfa, astrocfa::NoiseModel{});
+    return astrocfa::reconstruct_malvar_baseline(cfa, noise_model);
   }
   if(method == "residual-interpolation") {
-    return astrocfa::reconstruct_residual_interpolation(cfa, astrocfa::NoiseModel{});
+    return astrocfa::reconstruct_residual_interpolation(cfa, noise_model);
   }
   if(method == "frequency-guided") {
-    return astrocfa::reconstruct_frequency_guided(cfa, astrocfa::NoiseModel{});
+    return astrocfa::reconstruct_frequency_guided(cfa, noise_model);
   }
   if(method == "inverse-refine") {
-    return astrocfa::reconstruct_inverse_refine(cfa, astrocfa::NoiseModel{},
+    return astrocfa::reconstruct_inverse_refine(cfa, noise_model,
                                                 inverse_options);
+  }
+  if(method == "cfa-mca-poc") {
+    return astrocfa::reconstruct_morphological_cfa(cfa, noise_model);
+  }
+  if(method == "cfa-mca-no-epsf-poc") {
+    return astrocfa::reconstruct_morphological_cfa(
+        cfa, noise_model,
+        astrocfa::MorphologicalReconstructionOptions{.enable_epsf = false});
+  }
+  if(method == "cfa-mca-achromatic-epsf-poc") {
+    return astrocfa::reconstruct_morphological_cfa(
+        cfa, noise_model,
+        astrocfa::MorphologicalReconstructionOptions{
+            .enable_chromatic_epsf = false,
+        });
+  }
+  if(method == "cfa-mca-independent-poc") {
+    return astrocfa::reconstruct_morphological_cfa(
+        cfa, noise_model,
+        astrocfa::MorphologicalReconstructionOptions{
+            .share_psf_across_sources = false,
+        });
   }
   throw std::invalid_argument("Unsupported demosaic method: " + method);
 }
@@ -248,6 +266,30 @@ void write_calibration_report(const astrocfa::CalibrationStats &stats, std::ostr
       << stats.flat_phase_mean[3] << "\n";
 }
 
+void write_morphological_report(
+    const astrocfa::MorphologicalReconstructionStats &stats, std::ostream &out) {
+  out << "  reconstruction: AstroCFA adaptive ePSF\n"
+      << "  selected point-source model: "
+      << astrocfa::morphological_model_name(stats.selected_model) << "\n"
+      << "  sources detected/validated/reconstructed: " << stats.detected_sources
+      << " / " << stats.validated_sources << " / " << stats.reconstructed_sources
+      << "\n"
+      << "  profile training sources: " << stats.profile_sources << "\n"
+      << "  holdout score independent/shared/profile/ePSF/chromatic: "
+      << stats.independent_validation << " / " << stats.shared_validation << " / "
+      << stats.profile_validation << " / " << stats.epsf_validation << " / "
+      << stats.chromatic_epsf_validation << "\n"
+      << "  profile information gain: " << stats.profile_information_gain << "\n"
+      << "  chromatic complexity penalty: " << stats.chromatic_complexity_penalty
+      << "\n";
+  if(stats.selected_model == astrocfa::MorphologicalModel::shared_chromatic_epsf) {
+    out << "  red ePSF shift/scale: " << stats.red_epsf_shift_x << ", "
+        << stats.red_epsf_shift_y << " / " << stats.red_epsf_scale << "\n"
+        << "  blue ePSF shift/scale: " << stats.blue_epsf_shift_x << ", "
+        << stats.blue_epsf_shift_y << " / " << stats.blue_epsf_scale << "\n";
+  }
+}
+
 void write_master_report(const char *name, const astrocfa::MasterBuildResult *master,
                          std::ostream &out) {
   if(master == nullptr) {
@@ -333,6 +375,18 @@ void write_benchmark_fixture_metadata(
            << "  \"noise\": \"" << (options.add_noise ? "astro" : "none") << "\",\n"
            << "  \"read_noise\": " << options.read_noise << ",\n"
            << "  \"shot_noise_scale\": " << options.shot_noise_scale << ",\n"
+           << "  \"common_star_sigma\": " << options.common_star_sigma << ",\n"
+           << "  \"star_flux_scale\": " << options.star_flux_scale << ",\n"
+           << "  \"star_count\": " << options.star_count << ",\n"
+           << "  \"moffat_beta\": " << options.moffat_beta << ",\n"
+           << "  \"psf_ellipticity\": " << options.psf_ellipticity << ",\n"
+           << "  \"psf_angle\": " << options.psf_angle << ",\n"
+           << "  \"chromatic_psf_shift\": " << options.chromatic_psf_shift
+           << ",\n"
+           << "  \"chromatic_psf_scale\": " << options.chromatic_psf_scale
+           << ",\n"
+           << "  \"star_phase\": \""
+           << (options.redundant_star_phase ? "redundant" : "diverse") << "\",\n"
            << "  \"input\": \"" << base << "-input.dng\",\n"
            << "  \"truth\": \"" << base << "-truth.tif\",\n"
            << "  \"stars\": \"" << base << "-stars.csv\",\n"
@@ -576,7 +630,6 @@ int main(int argc, char **argv) {
     }
 
     try {
-      std::string method = "bilinear-baseline";
       std::string output_path;
       std::string alias_risk_path;
       std::string residual_map_path;
@@ -596,13 +649,10 @@ int main(int argc, char **argv) {
       std::array<double, 3> custom_white_balance = {1.0, 1.0, 1.0};
       bool custom_white_balance_set = false;
       astrocfa::ImageWriteOptions write_options;
-      astrocfa::InverseRefinementOptions inverse_options;
       CalibrationCliOptions calibration_options;
       for(int i = 3; i < argc; ++i) {
         const std::string arg = argv[i];
-        if(arg == "--method" && i + 1 < argc) {
-          method = argv[++i];
-        } else if((arg == "-o" || arg == "--output") && i + 1 < argc) {
+        if((arg == "-o" || arg == "--output") && i + 1 < argc) {
           output_path = argv[++i];
         } else if(arg == "--preview-stretch" && i + 1 < argc) {
           preview_stretch = argv[++i];
@@ -657,18 +707,6 @@ int main(int argc, char **argv) {
         } else if(arg == "--saturation" && i + 1 < argc) {
           tone_options.saturation = std::stod(argv[++i]);
           tone_parameter_explicit = true;
-        } else if(arg == "--inverse-iterations" && i + 1 < argc) {
-          inverse_options.iterations = std::stoi(argv[++i]);
-        } else if(arg == "--chroma-smoothness" && i + 1 < argc) {
-          inverse_options.chroma_smoothness = std::stod(argv[++i]);
-        } else if(arg == "--alias-suppression" && i + 1 < argc) {
-          inverse_options.alias_suppression = std::stod(argv[++i]);
-        } else if(arg == "--edge-sensitivity" && i + 1 < argc) {
-          inverse_options.edge_sensitivity = std::stod(argv[++i]);
-        } else if(arg == "--star-chroma-guard" && i + 1 < argc) {
-          inverse_options.star_chroma_guard = std::stod(argv[++i]);
-        } else if(arg == "--star-luma-threshold" && i + 1 < argc) {
-          inverse_options.star_luma_threshold = std::stod(argv[++i]);
         } else if(arg == "--bias" && i + 1 < argc) {
           calibration_options.bias_path = argv[++i];
         } else if(arg == "--dark" && i + 1 < argc) {
@@ -698,9 +736,6 @@ int main(int argc, char **argv) {
         }
       }
 
-      if(!is_supported_demosaic_method(method)) {
-        throw std::invalid_argument("Unsupported demosaic method: " + method);
-      }
       if(preview_stretch != "none" && preview_stretch != "astro") {
         throw std::invalid_argument("Unsupported preview stretch: " + preview_stretch);
       }
@@ -744,8 +779,9 @@ int main(int argc, char **argv) {
       const LoadedCalibration masters = load_calibration_masters(calibration_options);
       const astrocfa::CalibrationResult calibrated =
           apply_cli_calibration(frame.cfa, calibration_options, masters);
-      astrocfa::DemosaicResult result =
-          reconstruct_with_method(calibrated.cfa, method, inverse_options);
+      const astrocfa::MorphologicalReconstructionResult reconstruction =
+          astrocfa::reconstruct_morphological_cfa_detailed(calibrated.cfa, {});
+      astrocfa::DemosaicResult result = reconstruction.reconstruction;
       std::unique_ptr<astrocfa::BackgroundModelResult> background;
       if(background_correction != "off") {
         background_options.neutralize = background_correction == "neutral";
@@ -793,14 +829,10 @@ int main(int argc, char **argv) {
       }
       std::cout << "AstroCFA reconstruction fidelity check\n"
                 << "  input: " << argv[2] << "\n"
-                << "  method: " << method << "\n"
                 << "  dimensions: " << calibrated.cfa.width() << " x "
-                << calibrated.cfa.height()
-                << "\n"
-                << "  inverse iterations: "
-                << (method == "inverse-refine" ? inverse_options.iterations : 0)
-                << "\n"
-                << "  remosaic residual samples: " << result.residual.samples << "\n"
+                << calibrated.cfa.height() << "\n";
+      write_morphological_report(reconstruction.stats, std::cout);
+      std::cout << "  remosaic residual samples: " << result.residual.samples << "\n"
                 << "  remosaic residual MAE: " << std::fixed << std::setprecision(8)
                 << result.residual.mean_absolute << "\n"
                 << "  remosaic residual RMS: " << result.residual.root_mean_square << "\n"
@@ -912,36 +944,20 @@ int main(int argc, char **argv) {
     }
 
     try {
-      std::string method = "inverse-refine";
       std::string output_path;
       std::string defect_map_path;
       std::string preview_stretch = "none";
       astrocfa::ImageWriteOptions write_options;
-      astrocfa::InverseRefinementOptions inverse_options;
       CalibrationCliOptions calibration_options;
 
       for(int i = 3; i < argc; ++i) {
         const std::string arg = argv[i];
-        if(arg == "--method" && i + 1 < argc) {
-          method = argv[++i];
-        } else if((arg == "-o" || arg == "--output") && i + 1 < argc) {
+        if((arg == "-o" || arg == "--output") && i + 1 < argc) {
           output_path = argv[++i];
         } else if(arg == "--preview-stretch" && i + 1 < argc) {
           preview_stretch = argv[++i];
         } else if(arg == "--jpeg-quality" && i + 1 < argc) {
           write_options.jpeg_quality = std::stoi(argv[++i]);
-        } else if(arg == "--inverse-iterations" && i + 1 < argc) {
-          inverse_options.iterations = std::stoi(argv[++i]);
-        } else if(arg == "--chroma-smoothness" && i + 1 < argc) {
-          inverse_options.chroma_smoothness = std::stod(argv[++i]);
-        } else if(arg == "--alias-suppression" && i + 1 < argc) {
-          inverse_options.alias_suppression = std::stod(argv[++i]);
-        } else if(arg == "--edge-sensitivity" && i + 1 < argc) {
-          inverse_options.edge_sensitivity = std::stod(argv[++i]);
-        } else if(arg == "--star-chroma-guard" && i + 1 < argc) {
-          inverse_options.star_chroma_guard = std::stod(argv[++i]);
-        } else if(arg == "--star-luma-threshold" && i + 1 < argc) {
-          inverse_options.star_luma_threshold = std::stod(argv[++i]);
         } else if(arg == "--bias" && i + 1 < argc) {
           calibration_options.bias_path = argv[++i];
         } else if(arg == "--dark" && i + 1 < argc) {
@@ -965,9 +981,6 @@ int main(int argc, char **argv) {
         }
       }
 
-      if(!is_supported_demosaic_method(method)) {
-        throw std::invalid_argument("Unsupported demosaic method: " + method);
-      }
       if(preview_stretch != "none" && preview_stretch != "astro") {
         throw std::invalid_argument("Unsupported preview stretch: " + preview_stretch);
       }
@@ -977,16 +990,17 @@ int main(int argc, char **argv) {
       const LoadedCalibration masters = load_calibration_masters(calibration_options);
       const astrocfa::CalibrationResult calibrated =
           apply_cli_calibration(frame.cfa, calibration_options, masters);
-      const astrocfa::DemosaicResult result =
-          reconstruct_with_method(calibrated.cfa, method, inverse_options);
+      const astrocfa::MorphologicalReconstructionResult reconstruction =
+          astrocfa::reconstruct_morphological_cfa_detailed(calibrated.cfa, {});
+      const astrocfa::DemosaicResult &result = reconstruction.reconstruction;
       const astrocfa::DemosaicQuality quality =
           astrocfa::analyze_demosaic_quality(result.image, calibrated.cfa);
 
       std::cout << "AstroCFA calibration and reconstruction\n"
-                << "  input: " << argv[2] << "\n"
-                << "  method: " << method << "\n";
+                << "  input: " << argv[2] << "\n";
       write_loaded_master_report(masters, std::cout);
       write_calibration_report(calibrated.stats, std::cout);
+      write_morphological_report(reconstruction.stats, std::cout);
       std::cout << "  remosaic residual MAE: " << std::fixed << std::setprecision(8)
                 << result.residual.mean_absolute << "\n"
                 << "  remosaic residual RMS: " << result.residual.root_mean_square << "\n"
@@ -1040,6 +1054,55 @@ int main(int argc, char **argv) {
           } else {
             throw std::invalid_argument("Unsupported benchmark noise mode: " + noise);
           }
+        } else if(arg == "--stars" && i + 1 < argc) {
+          scene_options.star_count = static_cast<std::size_t>(std::stoul(argv[++i]));
+          if(scene_options.star_count == 0 || scene_options.star_count > 512) {
+            throw std::invalid_argument("Star count must be in [1,512]");
+          }
+        } else if(arg == "--moffat-beta" && i + 1 < argc) {
+          scene_options.moffat_beta = std::stod(argv[++i]);
+          if(scene_options.moffat_beta <= 1.0 || scene_options.moffat_beta > 12.0) {
+            throw std::invalid_argument("Moffat beta must be in (1,12]");
+          }
+        } else if(arg == "--common-star-sigma" && i + 1 < argc) {
+          scene_options.common_star_sigma = std::stod(argv[++i]);
+          if(scene_options.common_star_sigma <= 0.0 ||
+             scene_options.common_star_sigma > 4.0) {
+            throw std::invalid_argument("Common star sigma must be in (0,4]");
+          }
+        } else if(arg == "--psf-ellipticity" && i + 1 < argc) {
+          scene_options.psf_ellipticity = std::stod(argv[++i]);
+          if(scene_options.psf_ellipticity < 0.0 ||
+             scene_options.psf_ellipticity >= 0.8) {
+            throw std::invalid_argument("PSF ellipticity must be in [0,0.8)");
+          }
+        } else if(arg == "--psf-angle" && i + 1 < argc) {
+          scene_options.psf_angle = std::stod(argv[++i]);
+        } else if(arg == "--chromatic-psf-shift" && i + 1 < argc) {
+          scene_options.chromatic_psf_shift = std::stod(argv[++i]);
+          if(std::abs(scene_options.chromatic_psf_shift) > 0.5) {
+            throw std::invalid_argument("Chromatic PSF shift must be in [-0.5,0.5]");
+          }
+        } else if(arg == "--chromatic-psf-scale" && i + 1 < argc) {
+          scene_options.chromatic_psf_scale = std::stod(argv[++i]);
+          if(std::abs(scene_options.chromatic_psf_scale) > 0.2) {
+            throw std::invalid_argument("Chromatic PSF scale must be in [-0.2,0.2]");
+          }
+        } else if(arg == "--star-flux-scale" && i + 1 < argc) {
+          scene_options.star_flux_scale = std::stod(argv[++i]);
+          if(scene_options.star_flux_scale <= 0.0 ||
+             scene_options.star_flux_scale > 4.0) {
+            throw std::invalid_argument("Star flux scale must be in (0,4]");
+          }
+        } else if(arg == "--star-phase" && i + 1 < argc) {
+          const std::string phase = argv[++i];
+          if(phase == "diverse") {
+            scene_options.redundant_star_phase = false;
+          } else if(phase == "redundant") {
+            scene_options.redundant_star_phase = true;
+          } else {
+            throw std::invalid_argument("Star phase must be diverse or redundant");
+          }
         } else if(arg == "--export-prefix" && i + 1 < argc) {
           export_prefix = argv[++i];
         } else if(arg == "--external" && i + 1 < argc) {
@@ -1067,6 +1130,10 @@ int main(int argc, char **argv) {
           "malvar-baseline",
           "residual-interpolation",
           "frequency-guided",
+          "cfa-mca-independent-poc",
+          "cfa-mca-no-epsf-poc",
+          "cfa-mca-achromatic-epsf-poc",
+          "cfa-mca-poc",
           "inverse-refine-no-star-guard",
           "inverse-refine",
       };
@@ -1078,6 +1145,24 @@ int main(int argc, char **argv) {
                 << "  noise: " << (scene_options.add_noise ? "astro" : "none")
                 << "\n"
                 << "  stars: " << scene.stars.size() << "\n"
+                << "  common star sigma: "
+                << (scene_options.common_star_sigma > 0.0
+                        ? std::to_string(scene_options.common_star_sigma)
+                        : "varied")
+                << "\n"
+                << "  star flux scale: " << scene_options.star_flux_scale << "\n"
+                << "  PSF: "
+                << (scene_options.moffat_beta > 0.0
+                        ? "Moffat beta=" + std::to_string(scene_options.moffat_beta)
+                        : "Gaussian")
+                << " ellipticity=" << scene_options.psf_ellipticity
+                << " angle=" << scene_options.psf_angle
+                << " chromatic_shift=" << scene_options.chromatic_psf_shift
+                << " chromatic_scale=" << scene_options.chromatic_psf_scale
+                << "\n"
+                << "  star phase: "
+                << (scene_options.redundant_star_phase ? "redundant" : "diverse")
+                << "\n"
                 << "  note: lower metrics are better; cfa_mae audits measured-sample fidelity.\n";
 
       if(!export_prefix.empty()) {
@@ -1103,12 +1188,59 @@ int main(int argc, char **argv) {
         if(method == "inverse-refine-no-star-guard") {
           inverse_options.star_chroma_guard = 0.0;
         }
-        const astrocfa::DemosaicResult result =
-            reconstruct_with_method(scene.cfa, reconstruction_method, inverse_options);
+        const astrocfa::NoiseModel benchmark_noise{
+            .read_noise = scene_options.read_noise,
+            .shot_noise_scale = scene_options.shot_noise_scale,
+        };
+        astrocfa::MorphologicalReconstructionStats morphological_stats;
+        const bool report_morphological_stats = method == "cfa-mca-poc";
+        astrocfa::DemosaicResult result = [&]() {
+          if(report_morphological_stats) {
+            astrocfa::MorphologicalReconstructionResult detailed =
+                astrocfa::reconstruct_morphological_cfa_detailed(
+                    scene.cfa, benchmark_noise);
+            morphological_stats = detailed.stats;
+            return std::move(detailed.reconstruction);
+          }
+          return reconstruct_with_method(scene.cfa, reconstruction_method,
+                                         inverse_options, benchmark_noise);
+        }();
         const astrocfa::ReconstructionMetrics metrics =
             astrocfa::measure_reconstruction(scene.truth, result.image, scene.cfa,
                                              scene.stars);
         write_benchmark_row(method, metrics, std::cout);
+        if(report_morphological_stats) {
+          std::cout << "    selected="
+                    << astrocfa::morphological_model_name(
+                           morphological_stats.selected_model)
+                    << " detected=" << morphological_stats.detected_sources
+                    << " validated=" << morphological_stats.validated_sources
+                    << " reconstructed="
+                    << morphological_stats.reconstructed_sources
+                    << " profile_sources=" << morphological_stats.profile_sources
+                    << " information_gain="
+                    << morphological_stats.profile_information_gain
+                    << " holdout(independent/shared/profile/epsf/chromatic)="
+                    << morphological_stats.independent_validation << "/"
+                    << morphological_stats.shared_validation << "/"
+                    << morphological_stats.profile_validation << "/"
+                    << morphological_stats.epsf_validation << "/"
+                    << morphological_stats.chromatic_epsf_validation
+                    << " chromatic_penalty="
+                    << morphological_stats.chromatic_complexity_penalty;
+          if(morphological_stats.selected_model ==
+             astrocfa::MorphologicalModel::shared_chromatic_epsf) {
+            std::cout << " chromatic_red(dx/dy/scale)="
+                      << morphological_stats.red_epsf_shift_x << "/"
+                      << morphological_stats.red_epsf_shift_y << "/"
+                      << morphological_stats.red_epsf_scale
+                      << " chromatic_blue(dx/dy/scale)="
+                      << morphological_stats.blue_epsf_shift_x << "/"
+                      << morphological_stats.blue_epsf_shift_y << "/"
+                      << morphological_stats.blue_epsf_scale;
+          }
+          std::cout << "\n";
+        }
         rows.push_back({.name = method, .input_transfer = "linear", .metrics = metrics});
 
         if(!export_prefix.empty()) {

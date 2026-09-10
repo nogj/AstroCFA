@@ -24,8 +24,8 @@ set(ASTROCFA_CORE_DEPS)
 if(TARGET PkgConfig::LibRaw)
   list(APPEND ASTROCFA_CORE_DEPS PkgConfig::LibRaw)
 else()
-  find_package(unofficial-libraw CONFIG REQUIRED)
-  list(APPEND ASTROCFA_CORE_DEPS unofficial::libraw::libraw)
+  find_package(libraw CONFIG REQUIRED)
+  list(APPEND ASTROCFA_CORE_DEPS libraw::raw)
 endif()
 
 if(TARGET PkgConfig::LibTiff)
@@ -56,6 +56,7 @@ add_library(astrocfa_core
   src/joint_reconstruction.cpp
   src/luminance_proxy.cpp
   src/multiframe_benchmark.cpp
+  src/morphological_reconstruction.cpp
   src/noise_model.cpp
   src/output_transform.cpp
   src/psf_estimator.cpp

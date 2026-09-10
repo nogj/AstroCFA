@@ -62,14 +62,15 @@ that information before interpolation, then report where uncertainty remains.
 ## Initial App Shape
 
 `astrocfa` is the Qt desktop application. It starts with a minimal interface for
-selecting an input, loading bias/dark/flat masters, choosing a reconstruction
-mode, previewing the reconstruction, switching diagnostic overlays, and exporting
+selecting an input, loading bias/dark/flat masters, previewing the reconstruction,
+switching diagnostic overlays, and exporting
 TIFF/JPEG output. A calibration selector accepts either one master RAW or a
 directory of RAW frames; directories are combined into a robust in-memory master.
-The `faithful-astro` preset uses inverse refinement, `star-preserve` increases its
-compact-star chroma guard, and `forensic` uses the frequency-guided path. White
-balance and output-space selectors keep sensor RGB, as-shot/daylight metadata,
-and linear sRGB conversion explicit.
+The reconstruction is purpose-specific: AstroCFA separates diffuse structure and
+point sources directly on the CFA, learns a shared stellar ePSF, and selects a
+radial, achromatic 2D, or chromatic 2D model by held-out CFA evidence. White balance
+and output-space selectors keep sensor RGB, as-shot/daylight metadata, and linear
+sRGB conversion explicit.
 
 `astrocfa-nogui` is the command-line executable for scripts, batch processing,
 and reproducible long-running workflows.
@@ -85,9 +86,9 @@ astrocfa-nogui benchmark-debayer --width 192 --height 128 --seed 7 --export-pref
 astrocfa-nogui benchmark-joint --frames 4 --noise astro --seeing fixed
 astrocfa-nogui benchmark-joint --seeing variable --transients 4 --export-prefix bench/joint
 astrocfa-nogui calibrate light.dng --dark master-dark.dng --flat master-flat.dng \
-  --method inverse-refine -o calibrated-preview.jpg --preview-stretch astro
+  -o calibrated-preview.jpg --preview-stretch astro
 astrocfa-nogui calibrate light.dng --dark-dir darks/ --flat-dir flats/ \
-  --method inverse-refine -o calibrated-preview.jpg --preview-stretch astro
+  -o calibrated-preview.jpg --preview-stretch astro
 astrocfa-nogui stack light1.dng light2.dng light3.dng --cfa-drizzle --scale 2 \
   --offset 0,0 --offset 0.42,-0.18 --offset -0.31,0.27
 astrocfa-nogui stack light1.dng light2.dng light3.dng --cfa-drizzle --auto-register
@@ -98,23 +99,19 @@ astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
   --psf-sigma 0.72 --psf-sigma 0.91 --psf-sigma 0.68 -o joint-psf.tif
 astrocfa-nogui stack light1.dng light2.dng light3.dng --joint-reconstruct \
   --auto-register --auto-psf -o joint-auto-psf.tif
-astrocfa-nogui develop input.dng --method bilinear-baseline -o baseline.tif
-astrocfa-nogui develop input.dng --method malvar-baseline -o malvar.tif
-astrocfa-nogui develop input.dng --method residual-interpolation -o ri.tif
-astrocfa-nogui develop input.dng --method frequency-guided -o preview.jpg
-astrocfa-nogui develop input.dng --method inverse-refine -o preview.jpg \
+astrocfa-nogui develop input.dng -o preview.jpg \
   --preview-stretch astro --export-alias-risk alias.tif --export-residual-map residual.tif
-astrocfa-nogui develop input.dng --method inverse-refine --white-balance daylight \
+astrocfa-nogui develop input.dng --white-balance daylight \
   --output-space srgb -o developed-linear-srgb.tif
-astrocfa-nogui develop input.dng --method inverse-refine --background gradient \
+astrocfa-nogui develop input.dng --background gradient \
   --export-background background.tif -o gradient-corrected.tif
-astrocfa-nogui develop input.dng --method inverse-refine --tone ghs \
+astrocfa-nogui develop input.dng --tone ghs \
   --stretch-factor 3.0 --local-intensity 8 --symmetry-point 0.08 \
   --protect-highlights 0.80 --saturation 1.05 -o developed-ghs.tif
-astrocfa-nogui develop input.dng --method inverse-refine \
+astrocfa-nogui develop input.dng \
   --wb-multipliers 2.1,1.0,1.4 --output-space camera -o developed-camera-rgb.tif
 astrocfa-nogui develop light.dng --bias master-bias.dng --dark master-dark.dng \
-  --flat master-flat.dng --method inverse-refine -o calibrated.tif \
+  --flat master-flat.dng -o calibrated.tif \
   --export-defect-map sensor-defects.tif
 ```
 
@@ -122,11 +119,11 @@ astrocfa-nogui develop light.dng --bias master-bias.dng --dark master-dark.dng \
 Its default color mode uses as-shot WB and the camera-to-sRGB matrix when the RAW
 provides them, with explicit daylight, unity, custom-multiplier, and camera-RGB
 alternatives. JPEG output can use an astro-oriented arcsinh preview stretch while
-TIFF remains linear. The `inverse-refine` method starts from frequency-guided residual
-interpolation and iteratively regularizes chroma as an edge-aware field anchored
-to measured CFA samples. It preserves the measured channel at every pixel, so
-the remosaicing residual remains an explicit accountability check rather than a
-decorative metric.
+TIFF remains linear. `develop` and `calibrate` always use AstroCFA's adaptive
+morphological reconstruction. The CLI and GUI report the selected stellar model,
+held-out scores, source counts, and chromatic ePSF transform, so model complexity
+is visible rather than hidden behind a preset. Established demosaicers remain only
+as internal benchmark baselines.
 
 Background correction is deliberately opt-in. `--background gradient` fits an
 additive degree-2 surface from low-luminance samples in spatial tiles, then uses
@@ -155,6 +152,26 @@ candidate. It reports RGB error, chroma error, false star color, star luminance
 error, aperture-flux error, FWHM error, elongation error, and remosaicing
 residual. This is the early guardrail for keeping
 AstroCFA's reconstruction work measurable rather than merely aesthetic.
+
+The experimental `cfa-mca-poc` row performs direct, noise-weighted CFA fitting
+with separate diffuse and point-source components. It can learn a shared radial
+PSF from a subset of stars selected for profile-bin information gain, while
+`cfa-mca-independent-poc` is the no-sharing ablation. Both remain benchmark-only
+research paths, not user-facing development methods. Controlled fixtures can use
+`--stars`, `--common-star-sigma`, `--moffat-beta`, `--psf-ellipticity`,
+`--psf-angle`, `--chromatic-psf-shift`, `--chromatic-psf-scale`,
+`--star-flux-scale`, and `--star-phase` to test the mechanism without changing
+the historical fixture. A flux-normalized, oversampled 2D ePSF is also fitted by
+alternating closed-form RGB flux estimates with constrained profile updates;
+source positions are then reoptimized against the ePSF and the diffuse component
+is conservatively re-estimated after subtracting the fitted stars. A low-rank
+chromatic extension can estimate global R/B shifts and scale relative to G,
+guarded by both CFA holdout and a six-parameter BIC penalty.
+`cfa-mca-no-epsf-poc` and `cfa-mca-achromatic-epsf-poc` are explicit ablations.
+The shared row also reports the selected model, source counts, full-matrix
+log-determinant information gain, and normalized CFA holdout scores for all
+five candidate families. A second morphology-aware detection pass is only used
+when unseen CFA samples select the ePSF.
 
 The benchmark can also export a standards-based linear CFA DNG fixture and score
 external RGB TIFF candidates through repeated `--external name=path` arguments;

@@ -4,6 +4,7 @@
 #include "astrocfa/demosaic.hpp"
 #include "astrocfa/frequency_cfa.hpp"
 #include "astrocfa/image_writer.hpp"
+#include "astrocfa/morphological_reconstruction.hpp"
 #include "astrocfa/output_transform.hpp"
 #include "astrocfa/raw_color.hpp"
 #include "astrocfa/raw_loader.hpp"
@@ -156,39 +157,28 @@ void write_master_report(const char *name, const LoadedMaster &master,
   }
 }
 
-struct ReconstructionPreset {
-  std::string name;
-  astrocfa::DemosaicResult result;
-};
-
-ReconstructionPreset reconstruct_for_preset(const QString &preset,
-                                             const astrocfa::CfaFrame &cfa) {
-  const astrocfa::NoiseModel noise;
-  if(preset == "faithful-astro") {
-    return {"inverse-refine", astrocfa::reconstruct_inverse_refine(cfa, noise)};
+void write_morphological_report(
+    const astrocfa::MorphologicalReconstructionStats &stats, std::ostream &out) {
+  out << "  reconstruction: AstroCFA adaptive ePSF\n"
+      << "  selected point-source model: "
+      << astrocfa::morphological_model_name(stats.selected_model) << "\n"
+      << "  sources detected/validated/reconstructed: " << stats.detected_sources
+      << " / " << stats.validated_sources << " / " << stats.reconstructed_sources
+      << "\n"
+      << "  profile training sources: " << stats.profile_sources << "\n"
+      << "  holdout score independent/shared/profile/ePSF/chromatic: "
+      << stats.independent_validation << " / " << stats.shared_validation << " / "
+      << stats.profile_validation << " / " << stats.epsf_validation << " / "
+      << stats.chromatic_epsf_validation << "\n"
+      << "  profile information gain: " << stats.profile_information_gain << "\n"
+      << "  chromatic complexity penalty: " << stats.chromatic_complexity_penalty
+      << "\n";
+  if(stats.selected_model == astrocfa::MorphologicalModel::shared_chromatic_epsf) {
+    out << "  red ePSF shift/scale: " << stats.red_epsf_shift_x << ", "
+        << stats.red_epsf_shift_y << " / " << stats.red_epsf_scale << "\n"
+        << "  blue ePSF shift/scale: " << stats.blue_epsf_shift_x << ", "
+        << stats.blue_epsf_shift_y << " / " << stats.blue_epsf_scale << "\n";
   }
-  if(preset == "star-preserve") {
-    astrocfa::InverseRefinementOptions options;
-    options.star_chroma_guard = 0.60;
-    options.alias_suppression = 0.55;
-    return {"inverse-refine (star-preserve)",
-            astrocfa::reconstruct_inverse_refine(cfa, noise, options)};
-  }
-  if(preset == "forensic" || preset == "frequency-guided") {
-    return {preset == "forensic" ? "frequency-guided (forensic)" : "frequency-guided",
-            astrocfa::reconstruct_frequency_guided(cfa, noise)};
-  }
-  if(preset == "inverse-refine") {
-    return {"inverse-refine", astrocfa::reconstruct_inverse_refine(cfa, noise)};
-  }
-  if(preset == "malvar-baseline") {
-    return {"malvar-baseline", astrocfa::reconstruct_malvar_baseline(cfa, noise)};
-  }
-  if(preset == "residual-interpolation") {
-    return {"residual-interpolation",
-            astrocfa::reconstruct_residual_interpolation(cfa, noise)};
-  }
-  return {"bilinear-baseline", astrocfa::reconstruct_baseline(cfa, noise)};
 }
 
 } // namespace
@@ -285,7 +275,7 @@ int main(int argc, char **argv) {
 
   auto *mode_group = new QGroupBox("Mode");
   auto *mode_layout = new QGridLayout(mode_group);
-  auto *mode = new QComboBox;
+  auto *reconstruction_mode = new QLabel("Astro ePSF (automatic)");
   auto *linear_cfa = new QCheckBox("Linear CFA check");
   auto *star_candidates = new QCheckBox("Star candidates");
   auto *noise_model = new QCheckBox("Noise model");
@@ -304,13 +294,8 @@ int main(int argc, char **argv) {
   star_candidates->setToolTip("Detect bright candidates on a CFA-safe luminance proxy");
   noise_model->setToolTip("Show the initial Poisson-Gaussian noise model");
   frequency_cfa->setToolTip("Estimate Bayer carrier energy and alias risk before demosaicing");
-  mode->addItem("faithful-astro");
-  mode->addItem("star-preserve");
-  mode->addItem("forensic");
-  mode->addItem("inverse-refine");
-  mode->addItem("frequency-guided");
-  mode->addItem("malvar-baseline");
-  mode->addItem("residual-interpolation");
+  reconstruction_mode->setToolTip(
+      "Selects the validated radial, achromatic ePSF, or chromatic ePSF model");
   white_balance->addItem("auto");
   white_balance->addItem("as-shot");
   white_balance->addItem("daylight");
@@ -336,7 +321,7 @@ int main(int argc, char **argv) {
   tone_highlights->setToolTip("Start of the linear highlight-protection segment");
   tone_saturation->setToolTip("Chroma scale after luminance stretching");
   mode_layout->addWidget(new QLabel("Reconstruction"), 0, 0);
-  mode_layout->addWidget(mode, 0, 1);
+  mode_layout->addWidget(reconstruction_mode, 0, 1);
   mode_layout->addWidget(linear_cfa, 0, 2);
   mode_layout->addWidget(star_candidates, 0, 3);
   mode_layout->addWidget(noise_model, 0, 4);
@@ -603,7 +588,7 @@ int main(int argc, char **argv) {
       return;
     }
     append_log(log, command + ": scaffolded for " + input_path->text() +
-                        " using mode " + mode->currentText() + ".");
+                        " using Astro ePSF automatic reconstruction.");
     window.statusBar()->showMessage(command + " scaffolded");
   };
 
@@ -635,9 +620,9 @@ int main(int argc, char **argv) {
                   },
               },
           });
-      const ReconstructionPreset reconstruction =
-          reconstruct_for_preset(mode->currentText(), calibrated.cfa);
-      const astrocfa::DemosaicResult &result = reconstruction.result;
+      const astrocfa::MorphologicalReconstructionResult reconstruction =
+          astrocfa::reconstruct_morphological_cfa_detailed(calibrated.cfa, {});
+      const astrocfa::DemosaicResult &result = reconstruction.reconstruction;
       std::unique_ptr<astrocfa::BackgroundModelResult> background;
       if(background_correction->currentText() != "off") {
         background = std::make_unique<astrocfa::BackgroundModelResult>(
@@ -701,10 +686,9 @@ int main(int argc, char **argv) {
       update_preview();
       report << "AstroCFA calibrated reconstruction\n"
              << "  input: " << input_path->text().toStdString() << "\n"
-             << "  preset: " << mode->currentText().toStdString() << "\n"
-             << "  method: " << reconstruction.name << "\n"
              << "  dimensions: " << calibrated.cfa.width() << " x "
              << calibrated.cfa.height() << "\n";
+      write_morphological_report(reconstruction.stats, report);
       write_master_report("bias", bias, report);
       write_master_report("dark", dark, report);
       write_master_report("flat", flat, report);

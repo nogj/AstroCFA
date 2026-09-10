@@ -25,6 +25,15 @@ struct SyntheticAstroSceneOptions {
   bool add_hot_pixels = true;
   double read_noise = 0.0025;
   double shot_noise_scale = 0.0018;
+  double common_star_sigma = 0.0;
+  double star_flux_scale = 1.0;
+  bool redundant_star_phase = false;
+  std::size_t star_count = 5;
+  double moffat_beta = 0.0;
+  double psf_ellipticity = 0.0;
+  double psf_angle = 0.0;
+  double chromatic_psf_shift = 0.0;
+  double chromatic_psf_scale = 0.0;
   BayerPattern pattern;
 };
 

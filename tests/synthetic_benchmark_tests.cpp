@@ -1,5 +1,6 @@
 #include "astrocfa/demosaic.hpp"
 #include "astrocfa/multiframe_benchmark.hpp"
+#include "astrocfa/morphological_reconstruction.hpp"
 #include "astrocfa/reconstruction_metrics.hpp"
 #include "astrocfa/synthetic_astro_scene.hpp"
 
@@ -100,6 +101,174 @@ void star_chroma_guard_reduces_synthetic_star_false_color() {
           "Star chroma guard should reduce synthetic star false color");
 }
 
+void morphological_poc_is_sensor_domain_and_finite() {
+  const astrocfa::SyntheticAstroScene scene =
+      astrocfa::make_synthetic_astro_scene(astrocfa::SyntheticAstroSceneOptions{
+          .width = 96,
+          .height = 72,
+          .seed = 7,
+          .add_noise = true,
+          .add_hot_pixels = true,
+      });
+  const astrocfa::DemosaicResult result = astrocfa::reconstruct_morphological_cfa(
+      scene.cfa,
+      astrocfa::NoiseModel{.read_noise = 0.0025, .shot_noise_scale = 0.0018});
+  const astrocfa::ReconstructionMetrics metrics = astrocfa::measure_reconstruction(
+      scene.truth, result.image, scene.cfa, scene.stars);
+  require(std::isfinite(metrics.rgb_rmse),
+          "Morphological reconstruction RGB error should be finite");
+  require(std::isfinite(metrics.star_flux_relative_error),
+          "Morphological reconstruction photometry should be finite");
+  require(metrics.cfa_residual_mae > 0.0,
+          "Sensor-domain likelihood must not hard-restore noisy CFA samples");
+}
+
+void shared_profile_improves_non_gaussian_psf_shape() {
+  const astrocfa::SyntheticAstroScene scene =
+      astrocfa::make_synthetic_astro_scene(astrocfa::SyntheticAstroSceneOptions{
+          .width = 128,
+          .height = 96,
+          .seed = 19,
+          .add_noise = true,
+          .add_hot_pixels = true,
+          .common_star_sigma = 0.65,
+          .star_flux_scale = 0.6,
+          .redundant_star_phase = false,
+          .star_count = 8,
+          .moffat_beta = 2.5,
+      });
+  const astrocfa::NoiseModel noise{
+      .read_noise = 0.0025,
+      .shot_noise_scale = 0.0018,
+  };
+  const astrocfa::DemosaicResult independent =
+      astrocfa::reconstruct_morphological_cfa(
+          scene.cfa, noise,
+          astrocfa::MorphologicalReconstructionOptions{
+              .share_psf_across_sources = false,
+          });
+  const astrocfa::MorphologicalReconstructionResult shared =
+      astrocfa::reconstruct_morphological_cfa_detailed(scene.cfa, noise);
+  const astrocfa::ReconstructionMetrics independent_metrics =
+      astrocfa::measure_reconstruction(scene.truth, independent.image, scene.cfa,
+                                       scene.stars);
+  const astrocfa::ReconstructionMetrics shared_metrics =
+      astrocfa::measure_reconstruction(scene.truth, shared.reconstruction.image,
+                                       scene.cfa, scene.stars);
+  require(scene.stars.size() == 8,
+          "Phase-diversity fixture should contain the requested stars");
+  require(shared_metrics.star_false_color < independent_metrics.star_false_color,
+          "Observable shared profile should reduce stellar false color");
+  require(shared_metrics.star_fwhm_relative_error <
+              independent_metrics.star_fwhm_relative_error,
+          "Observable shared profile should improve non-Gaussian PSF shape");
+  require(shared.stats.selected_model == astrocfa::MorphologicalModel::shared_profile,
+          "CFA holdout should select the shared profile on a common Moffat PSF");
+  require(shared.stats.profile_sources > 1 &&
+              shared.stats.profile_information_gain > 0.0,
+          "Profile selection should expose positive full-matrix information gain");
+  require(shared.stats.profile_validation < shared.stats.independent_validation &&
+              shared.stats.profile_validation < shared.stats.shared_validation,
+          "Selected shared profile should win on unseen CFA samples");
+}
+
+void shared_epsf_recovers_anisotropic_psf() {
+  const astrocfa::SyntheticAstroScene scene =
+      astrocfa::make_synthetic_astro_scene(astrocfa::SyntheticAstroSceneOptions{
+          .width = 192,
+          .height = 144,
+          .seed = 7,
+          .add_noise = true,
+          .add_hot_pixels = true,
+          .common_star_sigma = 0.65,
+          .star_flux_scale = 0.5,
+          .redundant_star_phase = false,
+          .star_count = 16,
+          .moffat_beta = 2.5,
+          .psf_ellipticity = 0.35,
+          .psf_angle = 0.55,
+      });
+  const astrocfa::NoiseModel noise{
+      .read_noise = 0.0025,
+      .shot_noise_scale = 0.0018,
+  };
+  const astrocfa::DemosaicResult without_epsf =
+      astrocfa::reconstruct_morphological_cfa(
+          scene.cfa, noise,
+          astrocfa::MorphologicalReconstructionOptions{.enable_epsf = false});
+  const astrocfa::MorphologicalReconstructionResult with_epsf =
+      astrocfa::reconstruct_morphological_cfa_detailed(scene.cfa, noise);
+  const astrocfa::ReconstructionMetrics baseline_metrics =
+      astrocfa::measure_reconstruction(scene.truth, without_epsf.image, scene.cfa,
+                                       scene.stars);
+  const astrocfa::ReconstructionMetrics epsf_metrics =
+      astrocfa::measure_reconstruction(scene.truth, with_epsf.reconstruction.image,
+                                       scene.cfa, scene.stars);
+  require(with_epsf.stats.selected_model == astrocfa::MorphologicalModel::shared_epsf,
+          "CFA holdout should select a 2D ePSF for an anisotropic common PSF");
+  require(with_epsf.stats.epsf_validation < with_epsf.stats.profile_validation,
+          "The 2D ePSF should predict unseen anisotropic CFA samples better");
+  require(with_epsf.stats.reconstructed_sources >
+              with_epsf.stats.validated_sources,
+          "The ePSF pass should recover sources rejected by the circular seed model");
+  require(epsf_metrics.star_fwhm_relative_error <
+              baseline_metrics.star_fwhm_relative_error,
+          "The selected ePSF should improve anisotropic stellar FWHM");
+  require(epsf_metrics.star_elongation_error <
+              baseline_metrics.star_elongation_error,
+          "The selected ePSF should improve anisotropic stellar shape");
+}
+
+void chromatic_epsf_reduces_lateral_color_error() {
+  const astrocfa::SyntheticAstroScene scene =
+      astrocfa::make_synthetic_astro_scene(astrocfa::SyntheticAstroSceneOptions{
+          .width = 256,
+          .height = 192,
+          .seed = 7,
+          .add_noise = true,
+          .add_hot_pixels = true,
+          .common_star_sigma = 0.65,
+          .star_flux_scale = 0.6,
+          .redundant_star_phase = false,
+          .star_count = 20,
+          .moffat_beta = 2.5,
+          .psf_ellipticity = 0.20,
+          .psf_angle = 0.55,
+          .chromatic_psf_shift = 0.25,
+          .chromatic_psf_scale = 0.10,
+      });
+  const astrocfa::NoiseModel noise{
+      .read_noise = 0.0025,
+      .shot_noise_scale = 0.0018,
+  };
+  const astrocfa::DemosaicResult achromatic =
+      astrocfa::reconstruct_morphological_cfa(
+          scene.cfa, noise,
+          astrocfa::MorphologicalReconstructionOptions{
+              .enable_chromatic_epsf = false,
+          });
+  const astrocfa::MorphologicalReconstructionResult chromatic =
+      astrocfa::reconstruct_morphological_cfa_detailed(scene.cfa, noise);
+  const astrocfa::ReconstructionMetrics achromatic_metrics =
+      astrocfa::measure_reconstruction(scene.truth, achromatic.image, scene.cfa,
+                                       scene.stars);
+  const astrocfa::ReconstructionMetrics chromatic_metrics =
+      astrocfa::measure_reconstruction(scene.truth,
+                                       chromatic.reconstruction.image, scene.cfa,
+                                       scene.stars);
+  require(chromatic.stats.selected_model ==
+              astrocfa::MorphologicalModel::shared_chromatic_epsf,
+          "CFA holdout should select the low-rank chromatic ePSF");
+  require(chromatic.stats.chromatic_epsf_validation <
+              chromatic.stats.epsf_validation,
+          "Chromatic ePSF should predict unseen CFA samples better");
+  require(chromatic_metrics.star_false_color <
+              achromatic_metrics.star_false_color,
+          "Chromatic ePSF should reduce lateral stellar color error");
+  require(chromatic_metrics.star_luma_rmse < achromatic_metrics.star_luma_rmse,
+          "Chromatic ePSF should improve stellar luminance reconstruction");
+}
+
 void multiframe_benchmark_is_reproducible_and_auditable() {
   const astrocfa::MultiframeBenchmarkResult benchmark =
       astrocfa::run_multiframe_benchmark(astrocfa::MultiframeBenchmarkOptions{
@@ -177,6 +346,10 @@ int main() {
     synthetic_scene_has_truth_and_cfa();
     benchmark_metrics_are_finite_and_accountable();
     star_chroma_guard_reduces_synthetic_star_false_color();
+    morphological_poc_is_sensor_domain_and_finite();
+    shared_profile_improves_non_gaussian_psf_shape();
+    shared_epsf_recovers_anisotropic_psf();
+    chromatic_epsf_reduces_lateral_color_error();
     multiframe_benchmark_is_reproducible_and_auditable();
     psf_aware_solver_recovers_variable_seeing_detail();
   } catch(const std::exception &error) {

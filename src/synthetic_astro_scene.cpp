@@ -16,6 +16,27 @@ double sqr(double value) {
   return value * value;
 }
 
+double star_profile(double dx, double dy, double sigma, double moffat_beta,
+                    double ellipticity, double angle) {
+  const double cosine = std::cos(angle);
+  const double sine = std::sin(angle);
+  const double rotated_x = cosine * dx + sine * dy;
+  const double rotated_y = -sine * dx + cosine * dy;
+  const double axis_ratio = std::sqrt((1.0 + ellipticity) /
+                                      (1.0 - ellipticity));
+  const double elliptical_x = rotated_x / axis_ratio;
+  const double elliptical_y = rotated_y * axis_ratio;
+  const double radius2 = elliptical_x * elliptical_x +
+                         elliptical_y * elliptical_y;
+  if(moffat_beta <= 0.0) {
+    return std::exp(-0.5 * radius2 / (sigma * sigma));
+  }
+  const double fwhm = 2.354820045 * sigma;
+  const double alpha =
+      fwhm / (2.0 * std::sqrt(std::pow(2.0, 1.0 / moffat_beta) - 1.0));
+  return std::pow(1.0 + radius2 / (alpha * alpha), -moffat_beta);
+}
+
 double channel_value(astrocfa::RgbPixel pixel, int channel) {
   if(channel == 0) {
     return pixel.r;
@@ -101,8 +122,11 @@ astrocfa::RgbPixel sample_blurred_truth(const astrocfa::RgbImage &truth, double 
   return result;
 }
 
-std::vector<astrocfa::SyntheticStar> make_stars(std::size_t width, std::size_t height) {
-  return {
+std::vector<astrocfa::SyntheticStar> make_stars(std::size_t width,
+                                                std::size_t height,
+                                                std::size_t count,
+                                                std::uint32_t seed) {
+  std::vector<astrocfa::SyntheticStar> stars = {
       {.x = width * 0.18, .y = height * 0.22, .flux = 0.72, .sigma = 0.48,
        .color = {.r = 1.0F, .g = 1.0F, .b = 1.0F}},
       {.x = width * 0.36 + 0.23, .y = height * 0.31 + 0.41, .flux = 0.58, .sigma = 0.62,
@@ -114,6 +138,52 @@ std::vector<astrocfa::SyntheticStar> make_stars(std::size_t width, std::size_t h
       {.x = width * 0.48 + 0.49, .y = height * 0.78 + 0.27, .flux = 0.34, .sigma = 0.95,
        .color = {.r = 0.72F, .g = 0.86F, .b = 1.0F}},
   };
+  if(count < stars.size()) {
+    stars.resize(count);
+    return stars;
+  }
+  std::mt19937 rng(seed ^ 0x9e3779b9U);
+  std::uniform_real_distribution<double> x_pick(6.0, static_cast<double>(width) - 7.0);
+  std::uniform_real_distribution<double> y_pick(6.0, static_cast<double>(height) - 7.0);
+  std::uniform_real_distribution<double> flux_pick(0.35, 0.95);
+  std::uniform_real_distribution<double> color_pick(0.65, 1.0);
+  std::uniform_real_distribution<double> sigma_pick(0.42, 0.95);
+  std::size_t attempts = 0;
+  while(stars.size() < count && attempts < count * 100U) {
+    attempts += 1U;
+    const double x = x_pick(rng);
+    const double y = y_pick(rng);
+    const bool overlaps = std::any_of(
+        stars.begin(), stars.end(), [&](const astrocfa::SyntheticStar &star) {
+          const double dx = x - star.x;
+          const double dy = y - star.y;
+          return dx * dx + dy * dy < 64.0;
+        });
+    if(overlaps) {
+      continue;
+    }
+    const int dominant = static_cast<int>(stars.size() % 3U);
+    astrocfa::RgbPixel color{
+        .r = static_cast<float>(color_pick(rng)),
+        .g = static_cast<float>(color_pick(rng)),
+        .b = static_cast<float>(color_pick(rng)),
+    };
+    if(dominant == 0) {
+      color.r = 1.0F;
+    } else if(dominant == 1) {
+      color.g = 1.0F;
+    } else {
+      color.b = 1.0F;
+    }
+    stars.push_back(astrocfa::SyntheticStar{
+        .x = x,
+        .y = y,
+        .flux = flux_pick(rng),
+        .sigma = sigma_pick(rng),
+        .color = color,
+    });
+  }
+  return stars;
 }
 
 } // namespace
@@ -179,7 +249,20 @@ SyntheticCfaObservation make_synthetic_cfa_observation(
 
 SyntheticAstroScene make_synthetic_astro_scene(SyntheticAstroSceneOptions options) {
   RgbImage truth(options.width, options.height);
-  std::vector<SyntheticStar> stars = make_stars(options.width, options.height);
+  std::vector<SyntheticStar> stars =
+      make_stars(options.width, options.height, options.star_count, options.seed);
+  if(options.common_star_sigma > 0.0) {
+    for(SyntheticStar &star : stars) {
+      star.sigma = options.common_star_sigma;
+    }
+  }
+  for(SyntheticStar &star : stars) {
+    star.flux *= options.star_flux_scale;
+    if(options.redundant_star_phase) {
+      star.x = 2.0 * std::floor(star.x / 2.0) + 0.25;
+      star.y = 2.0 * std::floor(star.y / 2.0) + 0.25;
+    }
+  }
 
   for(std::size_t y = 0; y < options.height; ++y) {
     const double fy = static_cast<double>(y) / static_cast<double>(options.height);
@@ -198,11 +281,22 @@ SyntheticAstroScene make_synthetic_astro_scene(SyntheticAstroSceneOptions option
       for(const SyntheticStar &star : stars) {
         const double dx = static_cast<double>(x) - star.x;
         const double dy = static_cast<double>(y) - star.y;
-        const double psf = star.flux * std::exp(-0.5 * (dx * dx + dy * dy) /
-                                                (star.sigma * star.sigma));
-        pixel.r = clamp_scene(pixel.r + psf * star.color.r);
-        pixel.g = clamp_scene(pixel.g + psf * star.color.g);
-        pixel.b = clamp_scene(pixel.b + psf * star.color.b);
+        const double red_psf = star.flux * star_profile(
+            dx - options.chromatic_psf_shift,
+            dy + 0.5 * options.chromatic_psf_shift,
+            star.sigma * (1.0 + options.chromatic_psf_scale),
+            options.moffat_beta, options.psf_ellipticity, options.psf_angle);
+        const double green_psf = star.flux * star_profile(
+            dx, dy, star.sigma, options.moffat_beta, options.psf_ellipticity,
+            options.psf_angle);
+        const double blue_psf = star.flux * star_profile(
+            dx + options.chromatic_psf_shift,
+            dy - 0.5 * options.chromatic_psf_shift,
+            star.sigma * (1.0 - options.chromatic_psf_scale),
+            options.moffat_beta, options.psf_ellipticity, options.psf_angle);
+        pixel.r = clamp_scene(pixel.r + red_psf * star.color.r);
+        pixel.g = clamp_scene(pixel.g + green_psf * star.color.g);
+        pixel.b = clamp_scene(pixel.b + blue_psf * star.color.b);
       }
 
       truth.set_pixel(x, y, pixel);

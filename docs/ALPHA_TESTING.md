@@ -24,26 +24,22 @@ astrocfa-nogui benchmark-joint --seeing variable --transients 4
 astrocfa-nogui inspect light.dng --linear-cfa --frequency-cfa --estimate-psf
 
 astrocfa-nogui develop light.dng \
-  --method inverse-refine \
   -o preview.jpg \
   --preview-stretch astro \
   --export-alias-risk alias-risk.tif \
   --export-residual-map residual.tif
 
 astrocfa-nogui develop light.dng \
-  --method inverse-refine \
   --white-balance daylight \
   --output-space srgb \
   -o daylight-linear-srgb.tif
 
 astrocfa-nogui develop light.dng \
-  --method inverse-refine \
   --background gradient \
   --export-background fitted-background.tif \
   -o gradient-corrected.tif
 
 astrocfa-nogui develop light.dng \
-  --method inverse-refine \
   --tone ghs --stretch-factor 3.0 --local-intensity 8 \
   --symmetry-point 0.08 --protect-highlights 0.80 \
   -o ghs-render.tif
@@ -52,7 +48,6 @@ astrocfa-nogui develop light.dng \
   --bias-dir bias/ \
   --dark-dir darks/ \
   --flat-dir flats/ \
-  --method inverse-refine \
   -o calibrated.tif
 
 astrocfa-nogui stack light-01.dng light-02.dng light-03.dng \
@@ -81,8 +76,8 @@ Good reports include:
 - screenshots or crops from the GUI overlay selector;
 - whether the alias-risk and residual maps look plausible;
 - crops around undersampled stars, saturated stars, and flat-field defects.
-- whether `inverse-refine` improves or harms star color compared with
-  `inverse-refine-no-star-guard` in `benchmark-debayer`.
+- the selected AstroCFA point-source model, holdout scores, source counts, and any
+  reported red/blue ePSF shift or scale.
 - selected WB multipliers, output color space, and negative/out-of-range counts.
 - background tile/rejection counts, gradient amplitudes, and the exported fitted
   surface; inspect it for leaked nebulosity or halos before trusting correction.
